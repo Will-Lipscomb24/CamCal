@@ -1,0 +1,15 @@
+Resolution (H x V): 4112 x 3008(Full) and 4096 x 3000(Default)
+
+Sensor Format: 1.1"
+
+Sensor Diagonal: 17.52 mm
+
+Pixel Size: 3.45 x 3.45 um
+
+Default FPS: 30.9
+
+Sensor Size: 14.12 x 10.35 mm
+
+Horizontal FOV 25 mm Lense: 31.54 deg
+
+Vertical FOV 25 mm Lense: 23.39 deg
