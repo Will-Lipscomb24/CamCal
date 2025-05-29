@@ -5,9 +5,9 @@ camera:
   
 parameters:
   auto_exposure: false
-  exposure: 150000  # in microseconds
+  exposure: 15000  # in microseconds
   auto_gain: false
   gain: 5         # in dB
   pixel_format: "Mono8" 
-  image_width: 1280
-  image_height: 1280
+  image_width: 2080
+  image_height: 2080

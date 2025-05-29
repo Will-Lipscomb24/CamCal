@@ -1,6 +1,7 @@
 #Camera Calibration Script
 import csv
 import os 
+from time import sleep
 import numpy as np
 import keyboard
 import yaml
@@ -23,18 +24,14 @@ COUNTER = 0
 os.makedirs("calibration_images", exist_ok=True)
 os.makedirs("calibration_vicon_data", exist_ok=True)
 
-if not os.path.exists(VICON_PATH):
-    with open(VICON_PATH, "w") as f:
-        f.write(f"{OBJECT1},x,y,z,ex,ey,ez,{OBJECT2},x,y,z,ex,ey,ez\n")
-
 #Connect to Vicon System
 vicon_client = pv.PyViconDatastream()
 ret = vicon_client.connect(VICON_IP)
 print("Connecting to Vicon System...")
-if ret != pv.Results.Success:
-    print(f"\Connection to {VICON_IP} failed.")
+if ret != pv.Result.Success:
+    print(f"\nConnection to {VICON_IP} failed.")
 else:
-    print(f"\Connection to {VICON_IP} successful.")
+    print(f"\nConnection to {VICON_IP} successful.")
 tracker = tools.ObjectTracker(VICON_IP)
 
 #Connect to Basler Camera
@@ -52,6 +49,7 @@ converter.OutputBitAlignment = pylon.OutputBitAlignment_MsbAligned
 #Load and Set Camera Settings
 with open("config.yaml", "r") as file:
     config = yaml.safe_load(file)
+
 camera_settings = CameraSettings(
     exposure_time=config["parameters"].get("exposure"),
     gain=config["parameters"].get("gain"),
@@ -61,47 +59,49 @@ camera_settings = CameraSettings(
 )
 camera_settings.settings(camera)
 
-
 #Image and Vicon Data Capture
 camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 try:
-    while camera.IsGrabbing():
-        # Grab a frame
-        result = camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
-        if result.GrabSucceeded():
-            image = converter.Convert(result)
-            img_array = image.GetArray()
+    with open(VICON_PATH, "w", newline='') as f:
+        writer = csv.writer(f)
+        while True:
+            # Grab a frame
+            result = camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
+            if result.GrabSucceeded():
+                image = converter.Convert(result)
+                img_array = image.GetArray()
 
-            # Show live feed
-            cv2.imshow("Live Camera Feed", img_array)
+                # Show live feed
+                cv2.imshow("Live Camera Feed", img_array)
 
-            # Save on Enter key press
-            if keyboard.is_pressed("enter"):
-                COUNTER += 1
-                img_filename = f"{CAMERA_PATH}/image_{COUNTER}.png"
-                print(f"Saving image {COUNTER} to {img_filename}")
-                # Use pylon image to save so metadata preserved
-                IMG.AttachGrabResultBuffer(result)
-                IMG.Save(pylon.ImageFileFormat_Png, img_filename)
-                IMG.Release()
+                # Save on Enter key press
+                if keyboard.is_pressed("enter"):
+                    COUNTER += 1
+                    img_filename = f"{CAMERA_PATH}/cal_image_{COUNTER}.png"
+                    print(f"Saving image {COUNTER} to {img_filename}")
+                    # Use pylon image to save so metadata preserved
+                    IMG.AttachGrabResultBuffer(result)
+                    IMG.Save(pylon.ImageFileFormat_Png, img_filename)
+                    IMG.Release()
 
-                obj1_pos = np.array(tracker.get_position(OBJECT1))
-                obj2_pos = np.array(tracker.get_position(OBJECT2))
-                obj_data = np.concatenate((obj1_pos, obj2_pos))
+                    _,_, obj1_pos = tracker.get_position(OBJECT1)
+                    _,_, obj2_pos = tracker.get_position(OBJECT2)
+                    obj1_data = np.array(obj1_pos[0][2:])
+                    obj2_data = np.array(obj2_pos[0][2:])
+                    obj_data = np.concatenate((obj1_data, obj2_data))
+                    writer.writerow(obj_data.tolist())
 
-                with open(VICON_PATH, "a", newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(obj_data)
+                    # Wait for key release to avoid multiple saves
+                    while keyboard.is_pressed("enter"):
+                        pass
 
-                # Wait for key release to avoid multiple saves
-                while keyboard.is_pressed("enter"):
-                    pass
+                if cv2.waitKey(1) & 0xFF == 27 or keyboard.is_pressed("esc"):
+                    print("Exiting...")
+                    break
+                
+                sleep(0.1)
 
-            if cv2.waitKey(1) & 0xFF == 27 or keyboard.is_pressed("esc"):
-                print("Exiting...")
-                break
-
-        result.Release()
+            result.Release()
 
 finally:
     camera.StopGrabbing()
