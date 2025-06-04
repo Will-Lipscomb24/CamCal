@@ -2,6 +2,7 @@
 import csv
 import os 
 from time import sleep
+import shutil
 import numpy as np
 import keyboard
 import yaml
@@ -20,6 +21,11 @@ VICON_PATH = os.path.join("calibration_vicon_data", "vicon_data.csv")
 CAMERA_PATH = "calibration_images"
 COUNTER = 0
 
+
+if os.path.exists("calibration_images"):
+    shutil.rmtree("calibration_images")
+if os.path.exists("calibration_vicon_data"):
+    shutil.rmtree("calibration_vicon_data")
 #Directory Formatting
 os.makedirs("calibration_images", exist_ok=True)
 os.makedirs("calibration_vicon_data", exist_ok=True)
@@ -70,9 +76,9 @@ try:
             if result.GrabSucceeded():
                 image = converter.Convert(result)
                 img_array = image.GetArray()
-
+                display = cv2.resize(img_array, (1800, 1000), interpolation=cv2.INTER_AREA)
                 # Show live feed
-                cv2.imshow("Live Camera Feed", img_array)
+                cv2.imshow("Live Camera Feed", display)
 
                 # Save on Enter key press
                 if keyboard.is_pressed("enter"):

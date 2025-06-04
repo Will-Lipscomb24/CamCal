@@ -9,5 +9,5 @@ parameters:
   auto_gain: false
   gain: 5         # in dB
   pixel_format: "Mono8" 
-  image_width: 2080
-  image_height: 2080
+  image_width: 4096
+  image_height: 3000
