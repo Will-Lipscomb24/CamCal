@@ -11,27 +11,29 @@ PIXEL_SIZE = 0.00345 #mm
 FOCAL_LENGTH = 25 #mm
 RES= (4096, 3000)
 
+#Import vicon data and assign headers
 headers = ["dotx", "doty", "dotz", "dotqw", "dotqx", "dotqy", "dotqz",
            "camx", "camy", "camz", "camqw", "camqx", "camqy", "camqz"]
 df = pd.read_csv("calibration_vicon_data/vicon_data.csv", header=None, names=headers)
 df.to_csv("calibration_vicon_data/vicon_data_mod.csv", index=False)
 df_G2L = pd.read_csv("calibration_vicon_data/vicon_data_mod.csv")
 
+#Reorder columns to match the expected format for scipy
 cam_tL = df[["camx", "camy", "camz"]].values
 dot_tL = df[["dotx", "doty", "dotz"]].values
 cam_qG = df[["camqw", "camqx", "camqy", "camqz"]]
 cam_qG_df = pd.DataFrame(cam_qG)
 cam_qG_reorder = cam_qG_df.loc[:, ["camqx", "camqy", "camqz", "camqw"]].values
-
 rotations_cam = R.from_quat(cam_qG_reorder).as_matrix()
-#Use rotations to get local coordinates
+
+#Rotate from global frame to camera frame
 P_local = np.zeros((len(rotations_cam), 3))
 for i in range(len(rotations_cam)):
     rotation_G2L = rotations_cam[i]
     P_local[i,:] = rotation_G2L.T @ (dot_tL[i,:] - cam_tL[i,:])
     #Account for offset from the focal plane
-    P_local[i,1] -= 25.35
-    P_local[i,0] += 10.75
+    P_local[i,1] += 25.35
+    P_local[i,0] -= 10.75
 df2 = pd.DataFrame(P_local, columns=["cam2markerx", "cam2markery", "cam2markerz"])
 
 #Analytical Camera Matrix
@@ -92,8 +94,10 @@ def reprojection_residual(cam_params):
     return residuals
 
 initial_guess = [K0[0, 0], K0[0, 2], K0[1, 1], K0[1, 2]] + list(dist)
-
-result = least_squares(reprojection_residual, initial_guess,jac='3-point',loss='soft_l1', method='trf')
+lower_bounds = [0, 0, 0, 0] + [-1, -1, -1, -1, -1]
+upper_bounds = [np.inf, RES[0], np.inf, RES[1]] + [1, 1, 1, 1, 1]
+#result = least_squares(reprojection_residual, initial_guess,jac='3-point',loss='soft_l1', method='dogbox')
+result = least_squares(reprojection_residual, initial_guess, method='lm')
 
 K_solved = [result.x[0], 0, result.x[1]
             , 0, result.x[2], result.x[3]
@@ -113,20 +117,10 @@ analy_kps_2D_proj   = project(
                                 , dist_solved
                                 ).round().astype(int)
 
-manual_pixels = pixel_coords.loc[:,["x", "y"]].values
-
 for i in range(len(pixel_coords)):
-
-    analy_proj_gt       = Projection.project_bbox_kps_array_2cv2np(
-                                                                    img_to_project.copy()
-                                                                    , box = None
-                                                                    , keypoints = analy_kps_2D_proj[i:i+1,:]
-                                                                    , keypoint_color = (0, 0, 255) 
-                                                                    , circle_thickness = 5
-                                                                    , circle_size = 100
-                                                                    , origin_flag = True
-                                                                    , origin_color = (255, 0, 0)
-                                                                    , origin_thickness = 5
-                                                                    , origin_size = 30
-                                                                    )
-    cv2.imwrite(f"projected_images/proj_img_{i+1}.png", analy_proj_gt)
+    project_coords = analy_kps_2D_proj[i,:]
+    base_image = f"calibration_images/cal_image_{i+1}.png"
+    img = cv2.imread(base_image)
+    # Draw the projected points on the image
+    cv2.circle(img, (project_coords[0], project_coords[1]), 25, (255, 0, 0), 20)
+    cv2.imwrite(f"projected_images/proj_img_{i+1}.png", img)
