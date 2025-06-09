@@ -32,7 +32,7 @@ for i in range(len(rotations_cam)):
     rotation_G2L = rotations_cam[i]
     P_local[i,:] = rotation_G2L.T @ (dot_tL[i,:] - cam_tL[i,:])
     #Account for offset from the focal plane
-    P_local[i,1] += 25.35
+    P_local[i,1] += 24.5
     P_local[i,0] -= 10.75
 df2 = pd.DataFrame(P_local, columns=["cam2markerx", "cam2markery", "cam2markerz"])
 
@@ -70,9 +70,12 @@ def project(
         # radial distortion
         r2          = x0**2 + y0**2
         cdist       = 1 + D1*r2 + D2*r2**2 + D3*r2**3
+        #cdist       = 1 + D1*r2 + D2*r2**2 
         # tangential distortion
         xdist       = x0*cdist + 2*D4*x0*y0 + D5*(r2 + 2*x0**2)
         ydist       = y0*cdist + D4*(r2 + 2*y0**2) + 2*D5*x0*y0
+        # xdist       = x0*cdist + 2*D3*x0*y0 + D4*(r2 + 2*x0**2)
+        # ydist       = y0*cdist + D3*(r2 + 2*y0**2) + 2*D4*x0*y0
         # apply camera matrix
         u           = K[0, 0]*xdist + K[0, 2]
         v           = K[1, 1]*ydist + K[1, 2]
@@ -94,9 +97,9 @@ def reprojection_residual(cam_params):
     return residuals
 
 initial_guess = [K0[0, 0], K0[0, 2], K0[1, 1], K0[1, 2]] + list(dist)
-lower_bounds = [0, 0, 0, 0] + [-1, -1, -1, -1, -1]
-upper_bounds = [np.inf, RES[0], np.inf, RES[1]] + [1, 1, 1, 1, 1]
-#result = least_squares(reprojection_residual, initial_guess,jac='3-point',loss='soft_l1', method='dogbox')
+# lower_bounds = [0, 0, 0, 0] + [-1, -1, -1, -1, -1]
+# upper_bounds = [np.inf, RES[0], np.inf, RES[1]] + [1, 1, 1, 1, 1]
+#result = least_squares(reprojection_residual, initial_guess,jac='2-point', method='trf')
 result = least_squares(reprojection_residual, initial_guess, method='lm')
 
 K_solved = [result.x[0], 0, result.x[1]
@@ -124,3 +127,7 @@ for i in range(len(pixel_coords)):
     # Draw the projected points on the image
     cv2.circle(img, (project_coords[0], project_coords[1]), 25, (255, 0, 0), 20)
     cv2.imwrite(f"projected_images/proj_img_{i+1}.png", img)
+
+
+   
+    
