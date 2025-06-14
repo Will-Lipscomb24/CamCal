@@ -8,7 +8,7 @@ Pixel Size: 3.45 x 3.45 um
 
 Default FPS: 30.9
 
-Sensor Size: 14.12 x 10.35 mm
+Sensor Size: 14.13 x 10.35 mm
 
 Horizontal FOV 25 mm Lense: 31.54 deg
 

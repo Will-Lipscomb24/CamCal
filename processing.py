@@ -23,8 +23,7 @@ cam_tL = df[["camx", "camy", "camz"]].values
 dot_tL = df[["dotx", "doty", "dotz"]].values
 cam_qG = df[["camqw", "camqx", "camqy", "camqz"]]
 cam_qG_df = pd.DataFrame(cam_qG)
-cam_qG_reorder = cam_qG_df.loc[:, ["camqx", "camqy", "camqz", "camqw"]].values
-rotations_cam = R.from_quat(cam_qG_reorder).as_matrix()
+rotations_cam = R.from_quat(cam_qG_df[["camqw","camqx", "camqy", "camqz"]], scalar_first=True).as_matrix()
 
 #Rotate from global frame to camera frame
 P_local = np.zeros((len(rotations_cam), 3))
@@ -74,8 +73,6 @@ def project(
         # tangential distortion
         xdist       = x0*cdist + 2*D4*x0*y0 + D5*(r2 + 2*x0**2)
         ydist       = y0*cdist + D4*(r2 + 2*y0**2) + 2*D5*x0*y0
-        # xdist       = x0*cdist + 2*D3*x0*y0 + D4*(r2 + 2*x0**2)
-        # ydist       = y0*cdist + D3*(r2 + 2*y0**2) + 2*D4*x0*y0
         # apply camera matrix
         u           = K[0, 0]*xdist + K[0, 2]
         v           = K[1, 1]*ydist + K[1, 2]
@@ -97,9 +94,6 @@ def reprojection_residual(cam_params):
     return residuals
 
 initial_guess = [K0[0, 0], K0[0, 2], K0[1, 1], K0[1, 2]] + list(dist)
-# lower_bounds = [0, 0, 0, 0] + [-1, -1, -1, -1, -1]
-# upper_bounds = [np.inf, RES[0], np.inf, RES[1]] + [1, 1, 1, 1, 1]
-#result = least_squares(reprojection_residual, initial_guess,jac='2-point', method='trf')
 result = least_squares(reprojection_residual, initial_guess, method='lm')
 
 K_solved = [result.x[0], 0, result.x[1]
