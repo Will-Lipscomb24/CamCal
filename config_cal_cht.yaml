@@ -1,0 +1,54 @@
+data:
+  images_glob_dir: "./calib_images"   # folder of calibration images
+  glob: "*.png"                       # pattern for images
+
+board:
+  pattern: "chessboard"               # chessboard | circles | charuco
+  rows: 9                             # inner corners vertically
+  cols: 13                            # inner corners horizontally
+  square_size: 0.025                  # meters
+  # For ChArUco only:
+  marker_size: 0.018
+
+charuco:
+  dictionary: "DICT_5X5_1000"        # any cv2.aruco predefined dictionary
+
+detector:
+  refine_subpix: true
+
+solver:
+  max_iter: 200
+  eps: 1.0e-8
+
+# Switch to fisheye model (uses cv2.fisheye.*)
+fisheye:
+  enable: false
+  recompute_extrinsic: true
+  fix_skew: false
+  fix_k1k2k3k4: false
+
+# OpenCV pinhole flags
+flags:
+  use_intrinsic_guess: false
+  fix_principal_point: false
+  fix_aspect_ratio: false
+  zero_tangent_dist: false
+  rational_model: true
+  thin_prism_model: false
+  tilted_model: false
+  fix_k1: false
+  fix_k2: false
+  fix_k3: false
+  fix_k4: false
+  fix_k5: false
+  fix_k6: false
+  fix_s1_s2_s3_s4: false
+  fix_taux_tauy: false
+  fix_focal_length: false
+  fix_skew: false
+
+output:
+  dir: "./calib_out"
+  json: "calibration.json"
+  yaml: "calibration.yaml"
+  save_undistorted_preview: true
