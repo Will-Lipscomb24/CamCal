@@ -1,0 +1,13 @@
+CURRENT_DIR = os.getcwd()
+ARUCO_DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000)
+IMAGE_DIRECTORY = "calibration_images"
+MARKED_DIRECTORY = "Marked Images"
+CAMERA = 'XIMEA XiQ'
+LENS = '25mm_new'
+OUTPUT = f"calibration{LENS}.json"
+BOARD_SIZE_SQUARES = (25,15)
+BOARD_SIZE_PIXELS = (1936,1216)
+SQUARE_LENGTHS = 0.04
+MARKER_LENGHTS = 0.03
+BORDER_SIZE = 60
+SCALE = 1
