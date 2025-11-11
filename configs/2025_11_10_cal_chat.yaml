@@ -10,7 +10,7 @@ mode: "opencv"                            # REQUIRED.
 # DATA SOURCES (mode-dependent)
 # ============================
 data:
-  images_glob_dir: "./calib_images"       # REQUIRED for mode=="opencv", OPTIONAL otherwise.
+  images_glob_dir: "./calibration_images/2025_11_10_timestamp_10_30_00/"       # REQUIRED for mode=="opencv", OPTIONAL otherwise.
                                           # Folder containing calibration images.
 
   glob: "*.png"                           # REQUIRED for mode=="opencv", OPTIONAL otherwise.
@@ -25,26 +25,26 @@ data:
 # CALIBRATION TARGET (OpenCV mode)
 # ============================
 board:
-  pattern: "chessboard"                   # REQUIRED for mode=="opencv". Ignored in "scipy".
+  pattern: "charuco"                   # REQUIRED for mode=="opencv". Ignored in "scipy".
                                           # Target type: "chessboard" | "circles" | "charuco".
 
-  rows: 9                                 # REQUIRED for mode=="opencv".
+  rows: 11                                # REQUIRED for mode=="opencv".
                                           # Inner corners vertically.
 
-  cols: 13                                # REQUIRED for mode=="opencv".
+  cols: 8                                # REQUIRED for mode=="opencv".
                                           # Inner corners horizontally.
 
-  square_size: 0.025                      # REQUIRED for mode=="opencv".
+  square_size: 0.03                      # REQUIRED for mode=="opencv".
                                           # Physical edge length of one square (meters). Sets pose scale.
 
-  marker_size: 0.018                      # OPTIONAL. Only used if pattern=="charuco".
+  marker_size: 0.015                      # OPTIONAL. Only used if pattern=="charuco".
                                           # Physical size of the ArUco marker within each square (meters).
 
 # ============================
 # CHARUCO (OpenCV mode, if pattern=="charuco")
 # ============================
 charuco:
-  dictionary: "DICT_5X5_1000"             # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
+  dictionary: "DICT_6X6_250"             # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
                                           # OpenCV's predefined dictionary name.
 
 # ============================
@@ -179,9 +179,9 @@ scipy_calib:
 # OUTPUT (both modes)
 # ============================
 output:
-  dir: "./calib_out"                      # REQUIRED. Folder for results.
-  json: "calibration.json"                # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
-  yaml: "calibration.yaml"                # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
+  dir: "./calibration_results"                      # REQUIRED. Folder for results.
+  json: "2025_11_10_timestamp_10_30_00_calibration.json" # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
+  yaml: "2025_11_10_timestamp_10_30_00_calibration.yaml" # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
   save_undistorted_preview: true          # OPTIONAL (opencv mode). Saves a few undistorted demo images.
 
-# to run: python3 cv2_cal_cht.py --config configs/cv2_st_cal_cht.yaml
+# to run: python3 cv2_cal_cht.py --config configs/2025_11_10_cal_chat.yaml
