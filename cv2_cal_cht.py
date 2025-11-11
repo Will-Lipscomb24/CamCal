@@ -19,7 +19,10 @@ import sys
 import numpy as np
 import yaml
 
+from tqdm import tqdm
+
 import pdb 
+
 try:
     import cv2
 except Exception:
@@ -191,14 +194,14 @@ def run_opencv_from_yaml(cfg):
             getattr(cv2.aruco, cfg["charuco"]["dictionary"]))
         aruco_params = cv2.aruco.DetectorParameters()
 
-    for p in img_paths:
+    for p in tqdm(img_paths, total = len(img_paths), desc = 'Processing Images'):
         img = cv2.imread(str(p))
         if img is None:
             print(f"[WARN] cannot read {p}")
             continue
         if imsize is None:
             imsize = (img.shape[1], img.shape[0])
-
+        # pdb.set_trace()
         ok, pts = _opencv_detect_points(img, cfg, aruco_dict, aruco_params)
         if not ok:
             print(f"[INFO] pattern not found: {p}")
@@ -279,6 +282,7 @@ def run_opencv_from_yaml(cfg):
             cv2.imwrite(str(outdir / ("undist_" + p.name)), und)
 
     print(f"[OK] OpenCV calibration complete. RMS={rms:.6f}")
+    print(f"Results stored at {outdir}")
 
 
 # ============================================================
@@ -455,6 +459,7 @@ def run_scipy_from_yaml(cfg):
     save_outputs_scipy(cfg, Kopt, Dopt, qopt, rms, outdir)
 
     print(f"[OK] SciPy LM calibration complete. RMS={rms:.6f}")
+    print(f"Results stored at {outdir}")
 
 
 # ============================================================

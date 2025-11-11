@@ -28,10 +28,10 @@ board:
   pattern: "charuco"                   # REQUIRED for mode=="opencv". Ignored in "scipy".
                                           # Target type: "chessboard" | "circles" | "charuco".
 
-  rows: 11                                # REQUIRED for mode=="opencv".
+  rows: 8                                # REQUIRED for mode=="opencv".
                                           # Inner corners vertically.
 
-  cols: 8                                # REQUIRED for mode=="opencv".
+  cols: 11                                # REQUIRED for mode=="opencv".
                                           # Inner corners horizontally.
 
   square_size: 0.03                      # REQUIRED for mode=="opencv".
@@ -179,7 +179,7 @@ scipy_calib:
 # OUTPUT (both modes)
 # ============================
 output:
-  dir: "./calibration_results"                      # REQUIRED. Folder for results.
+  dir: "./results/2025_11_11_001"                      # REQUIRED. Folder for results.
   json: "2025_11_11_timestamp_11_15_00_calibration.json" # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
   yaml: "2025_11_11_timestamp_11_15_00_calibration.yaml" # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
   save_undistorted_preview: true          # OPTIONAL (opencv mode). Saves a few undistorted demo images.
