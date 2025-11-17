@@ -10,7 +10,7 @@ mode: "opencv"                            # REQUIRED.
 # DATA SOURCES (mode-dependent)
 # ============================
 data:
-  images_glob_dir: "./calib_images"       # REQUIRED for mode=="opencv", OPTIONAL otherwise.
+  images_glob_dir: "./calibration_images/2025_11_11_timestamp_11_15_00/" # REQUIRED for mode=="opencv", OPTIONAL otherwise.
                                           # Folder containing calibration images.
 
   glob: "*.png"                           # REQUIRED for mode=="opencv", OPTIONAL otherwise.
@@ -25,7 +25,7 @@ data:
 # CALIBRATION TARGET (OpenCV mode)
 # ============================
 board:
-  pattern: "chessboard"                   # REQUIRED for mode=="opencv". Ignored in "scipy".
+  pattern: "charuco"                      # REQUIRED for mode=="opencv". Ignored in "scipy".
                                           # Target type: "chessboard" | "circles" | "charuco".
 
 # OUTER corners (ignored by OpenCV)
@@ -39,13 +39,13 @@ board:
 # │ +--+--+--+--+--+--+--+--+│
 # └──────────────────────────┘
 # Count the total number of squares in each direction, then subtract 1 to get the inner corners
-  rows: 9                                 # REQUIRED for mode=="opencv".
+  rows: 8                                 # REQUIRED for mode=="opencv".
                                           # Inner corners vertically.
 
-  cols: 13                                # REQUIRED for mode=="opencv".
+  cols: 11                                # REQUIRED for mode=="opencv".
                                           # Inner corners horizontally.
 
-  square_size: 0.025                      # REQUIRED for mode=="opencv".
+  square_size: 0.03                       # REQUIRED for mode=="opencv".
                                           # Physical edge length of one square (meters). Sets pose scale.
 
 # For circles (only when pattern: circles)
@@ -57,10 +57,10 @@ circles:
 # CHARUCO (OpenCV mode, if pattern=="charuco")
 # ============================
 charuco:
-  dictionary: "DICT_5X5_1000"             # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
+  dictionary: "DICT_6X6_250"              # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
                                           # OpenCV's predefined dictionary name (e.g., DICT_4X4_50, DICT_5X5_1000, ...).
 
-  marker_size: 0.018                      # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
+  marker_size: 0.015                      # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
                                           # Physical size of the ArUco marker within each ChArUco square (meters).
 
 # ============================
@@ -245,16 +245,15 @@ scipy_calib:
 # OUTPUT (both modes)
 # ============================
 output:
-  dir: "./calib_out"                      # REQUIRED. Folder for results (JSON, YAML, previews).
-  json: "calibration.json"                # REQUIRED. Main results in JSON (K, D, RMS, flags/mode, warnings).
-  yaml: "calibration.yaml"                # OPTIONAL. Human-friendly YAML with inline comments and warnings.
+  dir: "./results/2025_11_14_001"         # REQUIRED. Folder for results.
+  json: "calibration.json"                # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
+  yaml: "calibration.yaml"                # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
   save_undistorted_preview: true          # OPTIONAL (opencv mode). Saves a few undistorted demo images.
   save_reprojection_preview: true         # OPTIONAL (opencv mode). Saves a few reprojected demo images. Reprojecting corners
- 
 
   image_size_hint:                        # OPTIONAL (used by SciPy-mode sanity checks for FOV calculations).
     w: 4096                               # Image width in pixels (if true image size is known).
     h: 3000                               # Image height in pixels.
 
 # Example OpenCV run:
-# python3 cv2_cal_cht.py --config configs/cv2_st_cal_cht.yaml
+# python3 cv2_cal_cht.py --config configs/2025_11_14_cal_cht.yaml
