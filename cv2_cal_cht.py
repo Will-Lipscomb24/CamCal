@@ -16,6 +16,7 @@ import json
 import math
 import pdb  # Debugger available on demand
 from pathlib import Path
+import shutil
 
 import numpy as np
 import yaml  # for reading config only
@@ -793,7 +794,7 @@ def _save_reprojection_overlays_charuco(cfg, used_paths, charuco_corners_list, c
         cv2.imwrite(str(out_path), vis)
 
 
-def run_opencv_from_yaml(cfg):
+def run_opencv_from_yaml(cfg, cfg_path):
     if cv2 is None:
         raise RuntimeError("OpenCV not installed.")
 
@@ -932,6 +933,11 @@ def run_opencv_from_yaml(cfg):
 
     outdir = Path(cfg["output"]["dir"])
     _outputs_opencv(cfg, imsize, K, D, rms, flags, outdir, warnings=sanity)
+    
+    try:
+        shutil.copy(cfg_path, outdir / f"config_used_{cfg_path.stem}.yaml")
+    except Exception as e:
+        print(f"[WARN] Could not copy config file: {e}")
 
     # Optional undistorted preview (subset)
     if cfg["output"].get("save_undistorted_preview", False):
@@ -1009,7 +1015,7 @@ def _residuals(vec, names, K0, D0, q0, ref_dirs, pix, solve_att):
     return (uv_pred - pix).ravel()
 
 
-def run_scipy_from_yaml(cfg):
+def run_scipy_from_yaml(cfg, cfg_path):
     if least_squares is None:
         raise RuntimeError("SciPy not installed.")
 
@@ -1159,6 +1165,10 @@ def run_scipy_from_yaml(cfg):
 
     outdir = Path(cfg["output"]["dir"])
     _outputs_scipy(cfg, Kopt, Dopt, qopt, rms, outdir, warnings=sanity)
+    try:
+        shutil.copy(cfg_path, outdir / f"config_used_{cfg_path.stem}.yaml")
+    except Exception as e:
+        print(f"[WARN] Could not copy config file: {e}")
 
 
 # ============================================================
@@ -1166,18 +1176,20 @@ def run_scipy_from_yaml(cfg):
 # ============================================================
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap          = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    args = ap.parse_args()
+    args        = ap.parse_args()
+    cfg_path    = Path(ap.parse_args().config).resolve()
+
 
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
     mode = cfg["mode"].lower()
     if mode == "opencv":
-        run_opencv_from_yaml(cfg)
+        run_opencv_from_yaml(cfg, cfg_path)
     elif mode == "scipy":
-        run_scipy_from_yaml(cfg)
+        run_scipy_from_yaml(cfg, cfg_path)
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
