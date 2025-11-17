@@ -726,9 +726,9 @@ def _save_reprojection_overlays_pinhole(cfg, used_paths, objpoints, imgpoints, K
         vis = img.copy()
         for (u, v), (up, vp) in zip(pts2d, proj):
             # detected (green circle)
-            cv2.circle(vis, (int(u), int(v)), 3, (0, 255, 0), -1)
+            cv2.circle(vis, (int(u), int(v)), 5, (0, 255, 0), -1)
             # reprojected (red circle)
-            cv2.circle(vis, (int(up), int(vp)), 3, (0, 0, 255), -1)
+            cv2.circle(vis, (int(up), int(vp)), 15, (0, 0, 255), 5)
             # error line (color-coded)
             _draw_error_line(vis, (u, v), (up, vp))
 
@@ -783,9 +783,9 @@ def _save_reprojection_overlays_charuco(cfg, used_paths, charuco_corners_list, c
         vis = img.copy()
         for (u, v), (up, vp) in zip(pts2d, proj):
             # detected corner
-            cv2.circle(vis, (int(u), int(v)), 3, (0, 255, 0), -1)
+            cv2.circle(vis, (int(u), int(v)), 5, (0, 255, 0), -1)
             # projected corner
-            cv2.circle(vis, (int(up), int(vp)), 3, (0, 0, 255), -1)
+            cv2.circle(vis, (int(up), int(vp)), 15, (0, 0, 255), 5)
             # error line
             _draw_error_line(vis, (u, v), (up, vp))
 
