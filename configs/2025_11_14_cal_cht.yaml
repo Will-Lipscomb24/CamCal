@@ -40,7 +40,7 @@ board:
 # └──────────────────────────┘
 # Count the total number of squares in each direction, then subtract 1 to get the inner corners
   rows: 8                                 # REQUIRED for mode=="opencv".
-                                          # Inner corners vertically.
+                                          # Inner corners vertically
 
   cols: 11                                # REQUIRED for mode=="opencv".
                                           # Inner corners horizontally.
@@ -106,7 +106,7 @@ flags:
   fix_aspect_ratio: false                 # OPTIONAL. Keep fx/fy ratio constant (requires a reasonable initial ratio).
   zero_tangent_dist: false                # OPTIONAL. Force p1=p2=0 (no tangential distortion).
 
-  rational_model: true                    # OPTIONAL (recommended if strong edge coverage). Enable k4–k6 radial terms.
+  rational_model: false                    # OPTIONAL (recommended if strong edge coverage). Enable k4–k6 radial terms.
                                           # High-order terms need many views with the target near image edges to be stable.
 
   thin_prism_model: false                 # OPTIONAL. Enable thin prism distortion (s1–s4).

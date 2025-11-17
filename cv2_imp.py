@@ -1,6 +1,7 @@
 import cv2
 import os 
 import numpy as np
+import pdb 
 
 
 
@@ -12,7 +13,8 @@ SQUARES_HORIZONTALLY = 8
 SQUARE_LENGTH = 0.03
 MARKER_LENGTH = 0.015
 # ...
-PATH_TO_YOUR_IMAGES = '/home/will/projects/CamCal/calibration_images'
+# PATH_TO_YOUR_IMAGES = '/home/will/projects/CamCal/calibration_images'
+PATH_TO_YOUR_IMAGES = 'calibration_images/2025_11_11_timestamp_11_15_00'
 # ------------------------------
 
 def calibrate_and_save_parameters():
@@ -47,6 +49,8 @@ def calibrate_and_save_parameters():
     # Save calibration data
     np.save('camera_matrix.npy', camera_matrix)
     np.save('dist_coeffs.npy', dist_coeffs)
+    # pdb.set_trace()
+    
 
     # Iterate through displaying all the images
     for image_file in image_files:
