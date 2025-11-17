@@ -106,7 +106,7 @@ flags:
   fix_aspect_ratio: false                 # OPTIONAL. Keep fx/fy ratio constant (requires a reasonable initial ratio).
   zero_tangent_dist: false                # OPTIONAL. Force p1=p2=0 (no tangential distortion).
 
-  rational_model: false                    # OPTIONAL (recommended if strong edge coverage). Enable k4–k6 radial terms.
+  rational_model: false                   # OPTIONAL (recommended if strong edge coverage). Enable k4–k6 radial terms.
                                           # High-order terms need many views with the target near image edges to be stable.
 
   thin_prism_model: false                 # OPTIONAL. Enable thin prism distortion (s1–s4).
@@ -114,10 +114,10 @@ flags:
 
   fix_k1: false                           # OPTIONAL. Hold k1 constant (at its initial value).
   fix_k2: false                           # OPTIONAL. Hold k2 constant.
-  fix_k3: false                           # OPTIONAL. Hold k3 constant.
-  fix_k4: false                           # OPTIONAL. Hold k4 constant (if rational_model is enabled).
-  fix_k5: false                           # OPTIONAL. Hold k5 constant (if rational_model is enabled).
-  fix_k6: false                           # OPTIONAL. Hold k6 constant (if rational_model is enabled).
+  fix_k3: true                            # OPTIONAL. Hold k3 constant.
+  fix_k4: true                            # OPTIONAL. Hold k4 constant (if rational_model is enabled).
+  fix_k5: true                            # OPTIONAL. Hold k5 constant (if rational_model is enabled).
+  fix_k6: true                            # OPTIONAL. Hold k6 constant (if rational_model is enabled).
 
   fix_s1_s2_s3_s4: false                  # OPTIONAL. Hold thin-prism terms s1–s4 constant.
   fix_taux_tauy: false                    # OPTIONAL. Hold tilted-sensor terms tauX, tauY constant.
@@ -245,7 +245,7 @@ scipy_calib:
 # OUTPUT (both modes)
 # ============================
 output:
-  dir: "./results/2025_11_14_001"         # REQUIRED. Folder for results.
+  dir: "./results/2025_11_14_003"         # REQUIRED. Folder for results.
   json: "calibration.json"                # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
   yaml: "calibration.yaml"                # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
   save_undistorted_preview: true          # OPTIONAL (opencv mode). Saves a few undistorted demo images.
