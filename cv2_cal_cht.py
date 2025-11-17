@@ -212,6 +212,41 @@ def _sanity_check_distortion_pinhole(K, D, imsize=None, model_name="pinhole", fl
     return warnings
 
 
+def _recommendations_from_warnings(warnings_list):
+    """
+    Given a list of warning strings, return a list of plain-English
+    recommendations on what to try next in calibration.
+    """
+    recommendations = []
+    seen = set()
+
+    def add(rec):
+        if rec not in seen:
+            seen.add(rec)
+            recommendations.append(rec)
+
+    for w in warnings_list or []:
+        if "Tangential coefficients are large" in w:
+            add("Capture more images with out-of-plane board tilt and strong coverage near all image edges; avoid only fronto-parallel views.")
+        if "Radial factor at r=" in w and "outside [0.6,1.6]" in w:
+            add("Reduce the number of free high-order radial terms (e.g., fix k4..k6 to zero) and collect more images with the board near the corners.")
+        if "Radial factor at r=1.00" in w:
+            add("Verify that the square_size and sensor dimensions are in consistent units; for very wide lenses, consider using the fisheye model.")
+        if "oscillates near the center" in w:
+            add("Constrain or zero the highest-order radial coefficients and prefer a simpler distortion model unless you have dense corner coverage across the frame.")
+        if "Rational model (k4..k6) enabled" in w:
+            add("Try running calibration once with rational_model disabled and compare RMS and reprojection overlays before enabling high-order terms.")
+        if "FOVx=" in w or "FOVy=" in w:
+            add("Double-check image_size or image_size_hint and that fx/fy are in pixel units, not normalized or sensor-millimeter units.")
+        if "Not enough ChArUco detections" in w or "Not enough detections" in w:
+            add("Increase the number of calibration images, vary board distance and orientation, and ensure good lighting and focus on the pattern.")
+
+    if (warnings_list and not recommendations):
+        add("Inspect reprojection overlays and consider simplifying the distortion model, increasing pose diversity, and adding more calibration images.")
+
+    return recommendations
+
+
 # ============================================================
 # Output Writers (JSON + manual YAML with inline comments)
 # ============================================================
@@ -250,7 +285,16 @@ def _write_yaml_header(fh, title):
     fh.write(f"# ---- {title} ----\n")
 
 
-def _writer_opencv_yaml_with_comments(yaml_path: Path, imsize, K, D, rms, flags_value, warnings_list=None):
+def _writer_opencv_yaml_with_comments(
+    yaml_path: Path,
+    imsize,
+    K,
+    D,
+    rms,
+    flags_value,
+    warnings_list=None,
+    recommendations_list=None,
+):
     iw, ih = int(imsize[0]), int(imsize[1])
     fx = float(K[0, 0]); fy = float(K[1, 1])
     cx = float(K[0, 2]); cy = float(K[1, 2])
@@ -327,9 +371,27 @@ def _writer_opencv_yaml_with_comments(yaml_path: Path, imsize, K, D, rms, flags_
                 fh.write(f"  - {_fmt_yaml_scalar(w)}\n")
         else:
             fh.write("warnings: []\n")
+        _write_yaml_blank(fh)
+
+        _write_yaml_header(fh, "Sanity Recommendations")
+        if recommendations_list:
+            fh.write("recommendations:\n")
+            for r in recommendations_list:
+                fh.write(f"  - {_fmt_yaml_scalar(r)}\n")
+        else:
+            fh.write("recommendations: []\n")
 
 
-def _writer_scipy_yaml_with_comments(yaml_path: Path, cfg, Kopt, Dopt, qopt, rms, warnings_list=None):
+def _writer_scipy_yaml_with_comments(
+    yaml_path: Path,
+    cfg,
+    Kopt,
+    Dopt,
+    qopt,
+    rms,
+    warnings_list=None,
+    recommendations_list=None,
+):
     # optional image size hint to compute FoVs in SciPy mode
     hint = cfg["output"].get("image_size_hint", {})
     iw = int(hint["w"]) if "w" in hint else None
@@ -413,10 +475,22 @@ def _writer_scipy_yaml_with_comments(yaml_path: Path, cfg, Kopt, Dopt, qopt, rms
                 fh.write(f"  - {_fmt_yaml_scalar(w)}\n")
         else:
             fh.write("warnings: []\n")
+        _write_yaml_blank(fh)
+
+        _write_yaml_header(fh, "Sanity Recommendations")
+        if recommendations_list:
+            fh.write("recommendations:\n")
+            for r in recommendations_list:
+                fh.write(f"  - {_fmt_yaml_scalar(r)}\n")
+        else:
+            fh.write("recommendations: []\n")
 
 
 def _outputs_opencv(cfg, imsize, K, D, rms, flags_value, outdir: Path, warnings=None):
     ensure_dir(outdir)
+    warnings = warnings or []
+    recommendations = _recommendations_from_warnings(warnings)
+
     payload = {
         "mode": "opencv",
         "image_width": int(imsize[0]),
@@ -425,29 +499,52 @@ def _outputs_opencv(cfg, imsize, K, D, rms, flags_value, outdir: Path, warnings=
         "D": np.asarray(D).tolist(),
         "rms": float(rms),
         "flags": int(flags_value),
-        "warnings": warnings or [],
+        "warnings": warnings,
+        "recommendations": recommendations,
     }
     with open(outdir / cfg["output"]["json"], "w") as f:
         json.dump(payload, f, indent=2)
     if cfg["output"].get("yaml"):
-        _writer_opencv_yaml_with_comments(outdir / cfg["output"]["yaml"], imsize, K, D, rms, flags_value, warnings or [])
+        _writer_opencv_yaml_with_comments(
+            outdir / cfg["output"]["yaml"],
+            imsize,
+            K,
+            D,
+            rms,
+            flags_value,
+            warnings_list=warnings,
+            recommendations_list=recommendations,
+        )
     print(f"Results stored at {outdir}")
 
 
 def _outputs_scipy(cfg, Kopt, Dopt, qopt, rms, outdir: Path, warnings=None):
     ensure_dir(outdir)
+    warnings = warnings or []
+    recommendations = _recommendations_from_warnings(warnings)
+
     payload = {
         "mode": "scipy",
         "K_like": {k: float(v) for k, v in Kopt.items()},
         "distortion": {k: float(v) for k, v in Dopt.items()},
         "attitude_quaternion": (qopt.tolist() if qopt is not None else None),
         "rms": float(rms),
-        "warnings": warnings or [],
+        "warnings": warnings,
+        "recommendations": recommendations,
     }
     with open(outdir / cfg["output"]["json"], "w") as f:
         json.dump(payload, f, indent=2)
     if cfg["output"].get("yaml"):
-        _writer_scipy_yaml_with_comments(outdir / cfg["output"]["yaml"], cfg, Kopt, Dopt, qopt, rms, warnings or [])
+        _writer_scipy_yaml_with_comments(
+            outdir / cfg["output"]["yaml"],
+            cfg,
+            Kopt,
+            Dopt,
+            qopt,
+            rms,
+            warnings_list=warnings,
+            recommendations_list=recommendations,
+        )
     print(f"Results stored at {outdir}")
 
 
@@ -1039,8 +1136,7 @@ def run_scipy_from_yaml(cfg):
     d_cam = _normalize(d_cam)
     uv_pred = _project_dirs_to_pixels(d_cam, Kopt, Dopt)
     rms = float(np.sqrt(np.mean(np.sum((uv_pred - pix_uv)**2, axis=1))))
-
-    # Build an OpenCV-like D vector to reuse sanity checker
+    
     Dvec = np.array([
         Dopt.get("k1", 0), Dopt.get("k2", 0), Dopt.get("p1", 0), Dopt.get("p2", 0),
         Dopt.get("k3", 0), Dopt.get("k4", 0), Dopt.get("k5", 0), Dopt.get("k6", 0)
