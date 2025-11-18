@@ -1,0 +1,259 @@
+# ============================
+# CALIBRATION MODE
+# ============================
+mode: "opencv"                            # REQUIRED.
+                                          # Which path to run:
+                                          #  - "opencv" : use OpenCV's calibrateCamera / fisheye.calibrate
+                                          #  - "scipy"  : use custom Levenberg–Marquardt (SciPy) solver
+
+# ============================
+# DATA SOURCES (mode-dependent)
+# ============================
+data:
+  images_glob_dir: "./calibration_images/2025_total_11_14_and_18/" # REQUIRED for mode=="opencv", OPTIONAL otherwise.
+                                          # Folder containing calibration images.
+
+  glob: "*.png"                           # REQUIRED for mode=="opencv", OPTIONAL otherwise.
+                                          # Filename glob (e.g., "*.jpg", "set1_*.png").
+
+  points_npz: "./points.npz"              # REQUIRED for mode=="scipy", OPTIONAL otherwise.
+                                          # Path to NPZ with:
+                                          #   - ref_dirs : Nx3 unit vectors (either already CAM-frame or REF-frame)
+                                          #   - pix_uv   : Nx2 observed pixel centroids
+
+# ============================
+# CALIBRATION TARGET (OpenCV mode)
+# ============================
+board:
+  pattern: "charuco"                      # REQUIRED for mode=="opencv". Ignored in "scipy".
+                                          # Target type: "chessboard" | "circles" | "charuco".
+
+# OUTER corners (ignored by OpenCV)
+# ┌──────────────────────────┐
+# │ +--+--+--+--+--+--+--+--+│
+# │ |  |  |  |  |  |  |  |  ||   
+# │ +--●--●--●--●--●--●--●--+│ ← ● inner corners (used)
+# │ |  |  |  |  |  |  |  |  ||   
+# │ +--●--●--●--●--●--●--●--+│
+# │ |  |  |  |  |  |  |  |  ||   
+# │ +--+--+--+--+--+--+--+--+│
+# └──────────────────────────┘
+# Count the total number of squares in each direction, then subtract 1 to get the inner corners
+  rows: 8                                 # REQUIRED for mode=="opencv".
+                                          # Inner corners vertically
+
+  cols: 11                                # REQUIRED for mode=="opencv".
+                                          # Inner corners horizontally.
+
+  square_size: 0.03                       # REQUIRED for mode=="opencv".
+                                          # Physical edge length of one square (meters). Sets pose scale.
+
+# For circles (only when pattern: circles)
+circles:
+  asymmetric: false                       # OPTIONAL. true for asym grid, false for symmetric.
+                                          # Only used if board.pattern == "circles".
+
+# ============================
+# CHARUCO (OpenCV mode, if pattern=="charuco")
+# ============================
+charuco:
+  dictionary: "DICT_6X6_250"              # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
+                                          # OpenCV's predefined dictionary name (e.g., DICT_4X4_50, DICT_5X5_1000, ...).
+
+  marker_size: 0.015                      # REQUIRED only if pattern=="charuco", otherwise OPTIONAL/ignored.
+                                          # Physical size of the ArUco marker within each ChArUco square (meters).
+
+# ============================
+# DETECTOR / CORNER REFINEMENT (OpenCV mode)
+# ============================
+detector:
+  refine_subpix: true                     # OPTIONAL. Improves corner precision; recommended.
+
+  preprocess:
+    clahe: false                          # OPTIONAL. Apply CLAHE to improve marker/corner visibility in
+                                          # low-contrast or unevenly lit images. Recommended if corners
+                                          # are hard to detect. Increases robustness but may alter gradients.
+
+    blur_ksize: 0                         # OPTIONAL. Gaussian blur kernel size (must be odd ≥3 to enable).
+                                          # Helps suppress noise before detection. Use sparingly—too much blur
+                                          # softens corners and hurts calibration accuracy. Set 0 to disable.
+
+# ============================
+# OPTIMIZATION CRITERIA (OpenCV mode)
+# ============================
+solver:
+  max_iter: 200                           # OPTIONAL. Termination iteration cap for OpenCV solver.
+  eps: 1.0e-8                             # OPTIONAL. Convergence epsilon (smaller = stricter).
+
+# ============================
+# FISHEYE MODEL (OpenCV mode)
+# ============================
+fisheye:
+  enable: false                           # OPTIONAL. If true, runs cv2.fisheye.calibrate instead of pinhole model.
+  recompute_extrinsic: true               # OPTIONAL (fisheye-only). Recompute extrinsics at each iteration.
+  fix_skew: false                         # OPTIONAL (fisheye-only). Constrain skew to zero.
+  fix_k1k2k3k4: false                     # OPTIONAL (fisheye-only). Freeze all fisheye distortion terms.
+
+# ============================
+# OPENCV PINHOLE FLAGS (ignored if fisheye.enable==true)
+# ============================
+flags:
+  use_intrinsic_guess: false              # OPTIONAL. If true and opencv_init.K/D are provided, uses them as seeds.
+                                          # If true but opencv_init is omitted, OpenCV will guess and then honor
+                                          # fix_* flags using that guess.
+
+  fix_principal_point: false              # OPTIONAL. Hold (cx, cy) fixed during optimization.
+  fix_aspect_ratio: false                 # OPTIONAL. Keep fx/fy ratio constant (requires a reasonable initial ratio).
+  zero_tangent_dist: false                # OPTIONAL. Force p1=p2=0 (no tangential distortion).
+
+  rational_model: false                   # OPTIONAL (recommended if strong edge coverage). Enable k4–k6 radial terms.
+                                          # High-order terms need many views with the target near image edges to be stable.
+
+  thin_prism_model: false                 # OPTIONAL. Enable thin prism distortion (s1–s4).
+  tilted_model: false                     # OPTIONAL. Enable tilted sensor model (tauX, tauY).
+
+  fix_k1: false                           # OPTIONAL. Hold k1 constant (at its initial value).
+  fix_k2: false                           # OPTIONAL. Hold k2 constant.
+  fix_k3: true                            # OPTIONAL. Hold k3 constant.
+  fix_k4: true                            # OPTIONAL. Hold k4 constant (if rational_model is enabled).
+  fix_k5: true                            # OPTIONAL. Hold k5 constant (if rational_model is enabled).
+  fix_k6: true                            # OPTIONAL. Hold k6 constant (if rational_model is enabled).
+
+  fix_s1_s2_s3_s4: false                  # OPTIONAL. Hold thin-prism terms s1–s4 constant.
+  fix_taux_tauy: false                    # OPTIONAL. Hold tilted-sensor terms tauX, tauY constant.
+  fix_focal_length: false                 # OPTIONAL. Hold fx, fy constant.
+  fix_skew: false                         # OPTIONAL. Hold skew (alpha) constant.
+
+# OPTIONAL alias for rational_model; if set, it overrides flags.rational_model
+modeling:
+  rational_model: null                    # OPTIONAL. null or boolean. If boolean, overrides flags.rational_model.
+
+# ============================
+# OPTIONAL OPENCV INITIALIZATION (pinhole & fisheye)
+# ============================
+opencv_init:
+  K: null                                 # OPTIONAL. 3x3 initial intrinsic matrix:
+                                          #   [[fx, alpha, cx],
+                                          #    [ 0,    fy, cy],
+                                          #    [ 0,     0,  1]]
+                                          # If provided and use_intrinsic_guess==true, OpenCV uses this as seed.
+                                          # Fixed parameters (e.g., fix_k1, fix_focal_length) are pinned to
+                                          # these initial values.
+
+  D: null                                 # OPTIONAL. Initial distortion coefficients in OpenCV order:
+                                          # [k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4, tauX, tauY].
+                                          # If provided with use_intrinsic_guess==true, OpenCV uses this as seed
+                                          # and any fixed coefficients (fix_k*) are held at these values.
+                                          # If omitted, fixed terms default to 0.
+
+# Example (commented out):
+# opencv_init:
+#   K: [[7000, 0, 2048],
+#       [0, 7000, 1500],
+#       [0,    0,    1]]
+#   D: [0.02, 0.0, 0.0, 0.0, 0.0]
+
+# ============================
+# CUSTOM SCIPY-LM CALIBRATION (mode=="scipy")
+# ============================
+scipy_calib:
+  # ---- Initialization (used as starting guess and/or fixed values) ----
+  init:
+    dx: 2000.0                            # REQUIRED for "scipy".
+                                          # Focal length in pixel-width units (fx analogue).
+
+    dy: 2000.0                            # REQUIRED for "scipy".
+                                          # Focal length in pixel-height units (fy analogue).
+
+    alpha: 0.0                            # REQUIRED for "scipy".
+                                          # Skew term (usually 0).
+
+    up: 960.0                             # REQUIRED for "scipy".
+                                          # Principal point u-coordinate (cx).
+
+    vp: 540.0                             # REQUIRED for "scipy".
+                                          # Principal point v-coordinate (cy).
+
+    k1: 0.0                               # REQUIRED for "scipy".
+                                          # Radial distortion 1 (Brown–Conrady).
+
+    k2: 0.0                               # REQUIRED for "scipy".
+                                          # Radial distortion 2.
+
+    k3: 0.0                               # REQUIRED for "scipy".
+                                          # Radial distortion 3 (higher-order).
+
+    p1: 0.0                               # REQUIRED for "scipy".
+                                          # Tangential distortion 1 (x-direction).
+
+    p2: 0.0                               # REQUIRED for "scipy".
+                                          # Tangential distortion 2 (y-direction).
+
+    q: [1.0, 0.0, 0.0, 0.0]               # OPTIONAL.
+                                          # Quaternion [w,x,y,z] for CAM<-REF rotation if ref_dirs are in REF frame.
+                                          # If ref_dirs are already in camera coordinates, you can omit or keep identity.
+
+  # ---- Which parameters to optimize vs hold fixed ----
+  optimize:
+    solve_attitude: false                 # OPTIONAL. true -> include quaternion (qw,qx,qy,qz) in solve (if q present).
+                                          # Use when ref_dirs are given in a different frame than the camera.
+
+    free_params:                          # OPTIONAL. List of parameter names to be optimized by LM.
+      # If omitted or null, defaults to "all parameters not in fixed_values or zero_params".
+      # Valid names include:
+      #   dx, dy, alpha, up, vp, k1, k2, k3, p1, p2, qw, qx, qy, qz
+      - dx
+      - dy
+      - up
+      - vp
+      - k1
+      - k2
+      - k3
+      - p1
+      - p2
+      # - alpha
+      # - qw
+      # - qx
+      # - qy
+      # - qz
+
+    fixed_values:                         # OPTIONAL. Dict of name: value to hold constant during optimization.
+      # Use this to pin any parameter to a specific constant (not only zero).
+      # Example: {alpha: 0.0, up: 960.0, vp: 540.0}
+      alpha: 0.0
+
+    zero_params: []                       # OPTIONAL. List of parameter names to force to 0 and hold fixed.
+                                          # Shortcut for fixed_values with value 0.0.
+                                          # Example: ["p1","p2"]
+
+    bounds: {}                            # OPTIONAL. Dict of name: [lower, upper] (for use with "trf"/"dogbox").
+                                          # Note: the current script uses method "lm" by default, which ignores bounds.
+                                          # To use bounds, switch solver.method to "trf" or "dogbox".
+
+  # ---- Solver controls ----
+  solver:
+    method: "lm"                          # OPTIONAL. "lm" | "trf" | "dogbox".
+                                          # LM is standard for reprojection problems (no bounds support).
+
+    max_iter: 200                         # OPTIONAL. Iteration cap for SciPy least_squares.
+
+    eps: 1.0e-12                          # OPTIONAL. Cost convergence tolerance (passed as ftol/xtol/gtol).
+
+    undist_iterations: 5                  # OPTIONAL. Reserved for future reverse-mapping undistortion iterations.
+
+# ============================
+# OUTPUT (both modes)
+# ============================
+output:
+  dir: "./results/2025_11_18_001"         # REQUIRED. Folder for results.
+  json: "calibration.json"                # REQUIRED. Main results in JSON (K, D, RMS, flags/mode).
+  yaml: "calibration.yaml"                # OPTIONAL. OpenCV YAML (for opencv mode) or mirror for convenience.
+  save_undistorted_preview: true          # OPTIONAL (opencv mode). Saves a few undistorted demo images.
+  save_reprojection_preview: true         # OPTIONAL (opencv mode). Saves a few reprojected demo images. Reprojecting corners
+
+  image_size_hint:                        # OPTIONAL (used by SciPy-mode sanity checks for FOV calculations).
+    w: 4096                               # Image width in pixels (if true image size is known).
+    h: 3000                               # Image height in pixels.
+
+# Example OpenCV run:
+# python3 cv2_cal_cht.py --config configs/2025_11_18_cal_cht.yaml
