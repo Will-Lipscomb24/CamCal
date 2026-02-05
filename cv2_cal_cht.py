@@ -42,6 +42,37 @@ def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
 
+def pose_from_rvec_tvec(rvec, tvec):
+    """
+    OpenCV pose semantics (explicit):
+
+      X^C = R_{B->C} X^B + t^C_{Co->Bo}
+
+    where:
+      - R_{B->C} rotates board-frame vectors into camera frame
+      - t^C_{Co->Bo} is the vector from camera origin to board origin,
+        expressed in camera frame
+
+    Parameters
+    ----------
+    rvec : (3,1) Rodrigues vector
+    tvec : (3,1) translation vector
+
+    Returns
+    -------
+    dict with explicit frame-aware naming
+    """
+    if cv2 is None:
+        raise ImportError("OpenCV is required for pose_from_rvec_tvec")
+    R, _ = cv2.Rodrigues(rvec)
+
+    return {
+        "R_B_to_C": R.tolist(),
+        "t_C_Co_to_Bo": tvec.reshape(-1).tolist(),
+        "rvec_B_to_C": rvec.reshape(-1).tolist(),
+    }
+
+
 def _compute_intrinsic_extras(fx, fy, skew, cx, cy, image_w=None, image_h=None):
     """
     Compute convenience metrics:
@@ -211,6 +242,7 @@ def _sanity_check_distortion_pinhole(K, D, imsize=None, model_name="pinhole", fl
             warnings.append(f"FOVy={fovy:.1f}° looks unusual for this sensor size; verify fy or units.")
 
     return warnings
+
 
 
 def _recommendations_from_warnings(warnings_list):
@@ -383,6 +415,31 @@ def _writer_opencv_yaml_with_comments(
             fh.write("recommendations: []\n")
 
 
+def write_poses_json(outdir, pose_entries, calibration_path):
+    """
+    Writes per-image board->camera poses.
+
+    Each pose satisfies:
+      X^C = R_B_to_C X^B + t^C_{Co->Bo}
+    """
+    payload = {
+        "calibration": {
+            "path": str(calibration_path),
+            "frame_convention": {
+                                "equation": "X^C = R_B_to_C X^B + t^C_{Co->Bo}",
+                                "frames": {
+                                    "B": "Charuco board frame",
+                                    "C": "Camera optical frame"
+                                }
+            }
+        },
+        "poses": pose_entries
+    }
+
+    with open(outdir / "poses.json", "w") as f:
+        json.dump(payload, f, indent=2)
+
+
 def _writer_scipy_yaml_with_comments(
     yaml_path: Path,
     cfg,
@@ -487,21 +544,31 @@ def _writer_scipy_yaml_with_comments(
             fh.write("recommendations: []\n")
 
 
-def _outputs_opencv(cfg, imsize, K, D, rms, flags_value, outdir: Path, warnings=None):
+def _outputs_opencv(cfg, imsize, K, D, rms, flags_value, charuco_geometry, outdir: Path, warnings=None):
     ensure_dir(outdir)
     warnings = warnings or []
     recommendations = _recommendations_from_warnings(warnings)
-
+    # charuco_geometry is None for non-Charuco patterns
     payload = {
-        "mode": "opencv",
-        "image_width": int(imsize[0]),
-        "image_height": int(imsize[1]),
-        "K": np.asarray(K).tolist(),
-        "D": np.asarray(D).tolist(),
-        "rms": float(rms),
-        "flags": int(flags_value),
-        "warnings": warnings,
-        "recommendations": recommendations,
+            "mode": "opencv",
+
+            "intrinsics": {
+                "K": np.asarray(K).tolist(),
+                "D": np.asarray(D).tolist(),
+                "image_width": int(imsize[0]),
+                "image_height": int(imsize[1]),
+            },
+
+            "charuco_board": {
+                "frame": "B",
+                "square_size": cfg["board"]["square_size"],
+                "marker_size": cfg["charuco"]["marker_size"],
+                "corners_3d": charuco_geometry,
+            } if charuco_geometry else None,
+
+            "rms": float(rms),
+            "warnings": warnings,
+            "recommendations": recommendations,
     }
     with open(outdir / cfg["output"]["json"], "w") as f:
         json.dump(payload, f, indent=2)
@@ -752,6 +819,21 @@ def _get_charuco_board_corners(board):
     raise RuntimeError("CharucoBoard has neither 'chessboardCorners' nor 'getChessboardCorners()'.")
 
 
+def extract_charuco_board_geometry(board):
+    """
+    Returns Charuco corner coordinates in the board frame B.
+
+    Each corner is:
+      X^B = [x, y, 0]^T  (units = square_size)
+    """
+    corners = _get_charuco_board_corners(board)  # (N,3)
+
+    return {
+        str(i): corners[i].tolist()
+        for i in range(corners.shape[0])
+    }
+
+
 def _save_reprojection_overlays_charuco(cfg, used_paths, charuco_corners_list, charuco_ids_list,
                                         board, K, D, rvecs, tvecs, outdir: Path):
     """
@@ -924,6 +1006,35 @@ def run_opencv_from_yaml(cfg, cfg_path):
                 flags=flags, criteria=criteria
             )
 
+    # ------------------------------------------------------------
+    # Collect per-image poses (explicit image paths)
+    # ------------------------------------------------------------
+    pose_entries = []
+
+    if cfg["board"]["pattern"].lower() == "charuco":
+        used = used_paths_charuco
+    else:
+        used = used_paths
+
+    for path, rvec, tvec in zip(used, rvecs, tvecs):
+        pose = pose_from_rvec_tvec(rvec, tvec)
+        pose_entries.append({
+            "image_path": str(path),
+            **pose
+        })
+    
+    # assert len(pose_entries) == len(rvecs)
+    assert len(pose_entries) == len(rvecs)
+    
+    # ------------------------------------------------------------
+    # Collect Charuco board geometry if applicable
+    # ------------------------------------------------------------
+    charuco_geometry = None
+    if cfg["board"]["pattern"].lower() == "charuco":
+        charuco_geometry = extract_charuco_board_geometry(board)
+
+
+
     # Sanity checks and warnings
     sanity = _sanity_check_distortion_pinhole(K, D, imsize=imsize, flags_value=flags)
     if sanity:
@@ -932,7 +1043,7 @@ def run_opencv_from_yaml(cfg, cfg_path):
             print("  -", w)
 
     outdir = Path(cfg["output"]["dir"])
-    _outputs_opencv(cfg, imsize, K, D, rms, flags, outdir, warnings=sanity)
+    _outputs_opencv(cfg, imsize, K, D, rms, flags, charuco_geometry, outdir, warnings=sanity)
     
     try:
         shutil.copy(cfg_path, outdir / f"config_used_{cfg_path.stem}.yaml")
@@ -978,6 +1089,13 @@ def run_opencv_from_yaml(cfg, cfg_path):
                 tvecs,
                 outdir
             )
+    
+    calibration_json_path = Path(cfg["output"]["json"]).as_posix()
+    write_poses_json(
+        outdir,
+        pose_entries,
+        calibration_path=calibration_json_path
+    )
 
 
 # ============================================================
@@ -1178,9 +1296,8 @@ def run_scipy_from_yaml(cfg, cfg_path):
 def main():
     ap          = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    args        = ap.parse_args()
-    cfg_path    = Path(ap.parse_args().config).resolve()
-
+    args = ap.parse_args()
+    cfg_path = Path(args.config).resolve()
 
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
