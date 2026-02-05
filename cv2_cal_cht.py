@@ -1019,7 +1019,7 @@ def run_opencv_from_yaml(cfg, cfg_path):
     for path, rvec, tvec in zip(used, rvecs, tvecs):
         pose = pose_from_rvec_tvec(rvec, tvec)
         pose_entries.append({
-            "image_path": str(path),
+            "image_path":  str(path.resolve()),
             **pose
         })
     
