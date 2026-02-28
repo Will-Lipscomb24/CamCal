@@ -67,6 +67,7 @@ def detect_points(img, cfg, aruco_dict=None, aruco_params=None):
 
     elif pt == "charuco":
         corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
+        charucoCorners, charucoIds, marker_corners, marker_ids = detector.detectBoard(image)
         if len(corners) == 0: return False, None
         nrows, ncols = cfg["board"]["rows"], cfg["board"]["cols"]
         board = cv2.aruco.CharucoBoard(

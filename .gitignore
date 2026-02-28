@@ -4,5 +4,6 @@ __pycache__/
 *.csv
 *.png
 *.jpg
+*.png
 
 sandbox/

@@ -116,11 +116,11 @@ def get_camera_to_board_pose(image, K, dist):
         print(f"Skipping — pose estimation failed: {os.path.basename(image)}")
         return None, None, None
 
-    T_CB = np.eye(4)
+    T_BC = np.eye(4)
     R, _ = cv2.Rodrigues(rvec)
-    T_CB[:3, :3] = R
-    T_CB[:3,  3] = tvec.flatten() * 1000 #Convert m to mm
-    return T_CB, rvec, tvec
+    T_BC[:3, :3] = R
+    T_BC[:3,  3] = tvec.flatten() * 1000 #Convert m to mm
+    return T_BC, rvec, tvec
 
 # Obtain a stack of the T_CB transformation for all of the images
 def get_TCB_series(image_dir, K, dist):
@@ -175,60 +175,27 @@ def T_to_params(T):
 # Residual
 # ---------------------------------------------------------------
 
-# def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
-#     # The residual function computes the error between the observed T_CB and the predicted T_CB 
-#     # using the rotation and translation vectors
-#     # params is a 12-element vector containing the rotation abd translation for both offsets
-#     T_CvC = params_to_T(params[:6])   
-#     T_TvT = params_to_T(params[6:])   
-
-#     T_CCv = inv_T(T_CvC)
-#     res = []
-
-#     for T_CB, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
-
-#         # # Vicon target in the Vicon camera frame
-#         # T_CvTv = inv_T(T_VCv) @ T_VTv
-
-#         # # Predicted transformation from camera to board
-#         # T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-
-#         T_CvTv = inv_T(T_VCv) @ T_VTv
-
-#         # Predicted transformation from camera to board
-#         T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-
-#         diff = T_CB - T_CB_pred
-                 
-#         # Flatten only the informative 3×4 top block (bottom row is always
-#         # [0,0,0,1] for both sides, so it contributes zero and can be dropped)
-#         res.append(diff[:3, :].flatten())   # 12 residuals per observation
-
-#     return np.concatenate(res)
-
 def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
     # The residual function computes the error between the observed T_CB and the predicted T_CB 
     # using the rotation and translation vectors
     # params is a 12-element vector containing the rotation abd translation for both offsets
-    T_CvC = params_to_T(params[:6])   
-    T_TvT = params_to_T(params[6:])   
+    T_CvC = params_to_T(params[:6])      # Cv ← C
+    T_TvT = params_to_T(params[6:])      # Tv ← T
 
-    T_CCv = inv_T(T_CvC)
+    T_TTv = inv_T(T_TvT)                 # T ← Tv
     res = []
 
     for T_CB, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
 
-        # # Vicon target in the Vicon camera frame
-        # T_CvTv = inv_T(T_VCv) @ T_VTv
-
-        # # Predicted transformation from camera to board
-        # T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-
+        # Cv ← Tv
         T_CvTv = inv_T(T_VCv) @ T_VTv
 
-        # Predicted transformation from camera to board
-        #T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-        T_CB_pred = T_TvT @ T_CvTv @ T_CCv
+        # Tv ← Cv
+        T_TvCv = inv_T(T_CvTv)
+
+        # Predicted: B ← C  (board ← camera)
+        T_CB_pred = T_TTv @ T_TvCv @ T_CvC
+        #T_CB_pred = T_TvT @ T_CvTv @ T_CCv
 
         diff = T_CB - T_CB_pred
                  
