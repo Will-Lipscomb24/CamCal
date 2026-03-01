@@ -5,21 +5,22 @@ from time import sleep
 import time
 import shutil
 import numpy as np
-import keyboard
+#import keyboard
 import yaml
 import cv2
 import pyvicon_datastream as pv
 from pyvicon_datastream import tools
 from pypylon import pylon
-from settings import CameraSettings
+from src.settings import CameraSettings
+from pynput import keyboard 
 
 #Load and Set Camera Settings
-with open("config.yaml", "r") as file:
+with open("configs/config.yaml", "r") as file:
     cfg = yaml.safe_load(file)
 
 #Initialization
-OBJECT1 = cfg['vicon']['object1'] # camera
-OBJECT2 = cfg['vicon']['object2'] # soho
+OBJECT1 = cfg['vicon']['object1'] 
+OBJECT2 = cfg['vicon']['object2'] 
 IMG = pylon.PylonImage()
 VICON_IP = cfg['vicon']['ip_address']
 VICON_PATH = os.path.join('data',cfg['paths']['vicon_path'])
@@ -29,6 +30,19 @@ HEADER = ['image_number','soho_x','soho_y','soho_z','soho_qw','soho_qx','soho_qy
 
 os.makedirs(CAMERA_PATH,exist_ok=True)
 os.makedirs(VICON_PATH,exist_ok=True)
+
+
+enter_pressed = False
+esc_pressed = False
+
+def on_press(key):
+    global enter_pressed, esc_pressed
+    if key == keyboard.Key.enter:
+        enter_pressed = True
+    elif key == keyboard.Key.esc:
+        esc_pressed = True
+listener = keyboard.Listener(on_press=on_press)
+listener.start()    
 
 
 #Connect to Vicon System
@@ -92,7 +106,10 @@ try:
                 cv2.imshow("Live Camera Feed", display)
 
                 # Save on Enter key press
-                if keyboard.is_pressed("enter"):
+                
+                if enter_pressed:
+                    enter_pressed = False  # reset immediately
+
                     COUNTER += 1
                     img_filename = f"{CAMERA_PATH}/cal_image_{COUNTER}.png"
 
@@ -121,10 +138,7 @@ try:
                             IMG.Save(pylon.ImageFileFormat_Png, img_filename)
                             IMG.Release()
 
-                    # Always wait for key release regardless of outcome
-                    while keyboard.is_pressed("enter"):
-                        pass
-                if cv2.waitKey(1) & 0xFF == 27 or keyboard.is_pressed("esc"):
+                if esc_pressed or (cv2.waitKey(1) & 0xFF == 27):
                     print("Exiting...")
                     break
                 
@@ -133,6 +147,7 @@ try:
             result.Release()
 
 finally:
+    listener.stop()
     camera.StopGrabbing()
     camera.Close()
     cv2.destroyAllWindows()

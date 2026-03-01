@@ -1,9 +1,9 @@
 __pycache__/
 *.py[cod]
 
-*.csv
-*.png
-*.jpg
-*.png
+# *.csv
+# *.png
+# *.jpg
+# *.png
 
 sandbox/

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 ######## Inputs ################
 IMAGE_PATH    = "/home/will/projects/CamCal/data/offset_images/"  # glob pattern
-CONFIG_PATH    = "/home/will/projects/CamCal/calibration.yaml"
+CONFIG_PATH    = "/home/will/projects/CamCal/configs/calibration.yaml"
 SQUARES_X     = 7          # columns
 SQUARES_Y     = 5          # rows
 SQUARE_LEN    = 20e-3      # meters
@@ -47,8 +47,8 @@ with open("/home/will/projects/CamCal/data/vicon_data/vicon_data.csv", newline='
 
 image_numbers = [int(r['image_number']) for r in rows]
 
-cam_tL  = np.array([[float(r['cam_x']),  float(r['cam_y']),  float(r['cam_z'])]  for r in rows])
-soho_tL = np.array([[float(r['soho_x']), float(r['soho_y']), float(r['soho_z'])] for r in rows])
+cam_tL  = np.array([[float(r['cam_x']),  float(r['cam_y']),  float(r['cam_z'])]  for r in rows])/1000
+soho_tL = np.array([[float(r['soho_x']), float(r['soho_y']), float(r['soho_z'])] for r in rows])/1000
 cam_qG  = np.array([[float(r['cam_qw']),  float(r['cam_qx']),  float(r['cam_qy']),  float(r['cam_qz'])]  for r in rows])
 soho_qG = np.array([[float(r['soho_qw']), float(r['soho_qx']), float(r['soho_qy']), float(r['soho_qz'])] for r in rows])
 
@@ -104,7 +104,7 @@ def get_camera_to_board_pose(image, K, dist):
         corners, ids, gray, board
     )
 
-    if charucoCorners is None or charucoIds is None or len(charucoIds) < 4:
+    if charucoCorners is None or charucoIds is None :
         print(f"Skipping — insufficient charuco corners: {os.path.basename(image)}")
         return None, None, None
 
@@ -116,11 +116,12 @@ def get_camera_to_board_pose(image, K, dist):
         print(f"Skipping — pose estimation failed: {os.path.basename(image)}")
         return None, None, None
 
-    T_BC = np.eye(4)
+    T_CB = np.eye(4)
     R, _ = cv2.Rodrigues(rvec)
-    T_BC[:3, :3] = R
-    T_BC[:3,  3] = tvec.flatten() * 1000 #Convert m to mm
-    return T_BC, rvec, tvec
+    T_CB[:3, :3] = R
+    T_CB[:3,  3] = tvec.flatten() #Convert m to mm
+    return T_CB, rvec, tvec
+
 
 # Obtain a stack of the T_CB transformation for all of the images
 def get_TCB_series(image_dir, K, dist):
@@ -171,39 +172,80 @@ def T_to_params(T):
     tvec = T[:3, 3]
     return np.hstack([rvec.flatten(), tvec.flatten()])
 
-# ---------------------------------------------------------------
-# Residual
-# ---------------------------------------------------------------
+
+# def residuals(params, T_CB_array, T_VCv_array, T_VTv_array, weight_rot=1.0):
+#     """
+#     Geodesic residual function.
+#     params: 12-element vector [x, y, z, rx, ry, rz] for CvC and TvT
+#     weight_rot: scalar to balance translation (e.g., meters) vs rotation (radians)
+#     """
+#     T_CvC = params_to_T(params[:6])      # Cv ← C
+#     T_TvT = params_to_T(params[6:])      # Tv ← T
+    
+#     # Pre-calculate inverse if needed for the chain
+#     T_CCv = inv_T(T_CvC)
+    
+#     res = []
+
+#     for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
+#         # 1. Calculate Predicted Transformation
+#         # Cv ← Tv
+#         T_CvTv = inv_T(T_VCv) @ T_VTv
+#         # Predicted: B ← C
+#         T_CB_pred = T_CCv @ T_CvTv @ T_TvT
+
+#         # 2. Extract Rotation and Translation
+#         R_obs = T_CB_obs[:3, :3]
+#         t_obs = T_CB_obs[:3, 3]
+        
+#         R_pred = T_CB_pred[:3, :3]
+#         t_pred = T_CB_pred[:3, 3]
+
+#         # 3. Translation Residual (3 components)
+#         t_err = t_obs - t_pred
+
+#         # 4. Rotation Residual (Geodesic distance / Angle)
+#         # The relative rotation R_diff takes us from Pred to Obs
+#         R_diff = R_obs.T @ R_pred
+        
+#         # Calculate the angle of rotation (clamping for numerical stability)
+#         cos_theta = (np.trace(R_diff) - 1.0) / 2.0
+#         angle_err = np.arccos(cos_theta)
+
+#         # 5. Append components
+#         # Note: We append the angle_err as a single value. 
+#         # To keep the Jacobian 'square-ish', you could also use Axis-Angle (3 values).
+#         # Here we use the 3 translation errors + 1 weighted scalar angle error.
+#         res.append(np.concatenate([t_err, [weight_rot * angle_err]]))
+
+#     return np.concatenate(res)
 
 def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
-    # The residual function computes the error between the observed T_CB and the predicted T_CB 
-    # using the rotation and translation vectors
-    # params is a 12-element vector containing the rotation abd translation for both offsets
-    T_CvC = params_to_T(params[:6])      # Cv ← C
-    T_TvT = params_to_T(params[6:])      # Tv ← T
-
-    T_TTv = inv_T(T_TvT)                 # T ← Tv
+    T_CvC = params_to_T(params[:6])      
+    T_TvT = params_to_T(params[6:])      
+    
+    
     res = []
 
-    for T_CB, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
+    for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
 
-        # Cv ← Tv
+        T_CCv = inv_T(T_CvC)
+        # 1. Prediction Chain
         T_CvTv = inv_T(T_VCv) @ T_VTv
+        T_CB_pred = T_CCv @ T_CvTv @ T_TvT
 
-        # Tv ← Cv
-        T_TvCv = inv_T(T_CvTv)
-
-        # Predicted: B ← C  (board ← camera)
-        T_CB_pred = T_TTv @ T_TvCv @ T_CvC
-        #T_CB_pred = T_TvT @ T_CvTv @ T_CCv
-
-        diff = T_CB - T_CB_pred
-                 
-        # Flatten only the informative 3×4 top block (bottom row is always
-        # [0,0,0,1] for both sides, so it contributes zero and can be dropped)
-        res.append(diff[:3, :].flatten())   # 12 residuals per observation
+        # 2. Matrix Difference (Algebraic)
+        # We only use the top 3x4 block because the bottom row is [0,0,0,1] 
+        # for both, meaning the difference is always zero (useless for the solver).
+        diff = T_CB_obs[:3, :] - T_CB_pred[:3, :]
+        
+        # 3. Flatten into 12 residuals per observation
+        # The sum of squares of these 12 values == Frobenius Norm Squared
+        res.append(diff.flatten())
 
     return np.concatenate(res)
+
+
 
 def solve_rwhe(T0_flat, T_CB_array, T_VCv, T_VTv):
     """
@@ -223,7 +265,8 @@ def solve_rwhe(T0_flat, T_CB_array, T_VCv, T_VTv):
         residuals,
         T0_flat,
         args=(T_CB_array, T_VCv, T_VTv),
-        method='lm'
+        method='lm',
+        verbose=1
     )
 
     print(f"Final cost:  {result.cost:.6f}")
@@ -237,12 +280,13 @@ T0_cam = np.eye(4)
 T0_cam[:3, :3] = np.eye(3)
 T0_cam[:3, 3]  = np.array([0, 0, 0])
 
-target_offset = np.array([-228, -55, 30])  
+target_offset = np.array([-228, -55, 30])/1000  
 T0_target = np.eye(4)
 T0_target[:3, :3] = np.eye(3)
 T0_target[:3, 3]  = target_offset
 
 T0_flat = np.concatenate([T_to_params(T0_cam), T_to_params(T0_target)])
+T0_flat = np.zeros_like(T0_flat)  # Start from identity guess for both transforms
 ####### Manually Measured Offset Estimation for Initialization  ###########
 
 
@@ -267,38 +311,4 @@ print(T_CvC)
 
 print("\nTarget in Vicon Target Frame:")
 print(T_TvT)
-
-# res_final = result.fun
-# N = len(res_final) // 12
-# res_per_image = res_final.reshape(N, 12)
-
-# R_res = res_per_image[:, :9]
-# t_res = res_per_image[:, 9:]
-
-# R_rms = np.sqrt(np.mean(R_res**2, axis=1))
-# t_rms = np.sqrt(np.mean(t_res**2, axis=1))
-
-# fig, axes = plt.subplots(3, 1, figsize=(10, 8))
-# fig.suptitle("Final Residuals per Image")
-
-# axes[0].bar(range(N), R_rms)
-# axes[0].set_title("Rotation residual RMS per image")
-# axes[0].set_ylabel("RMS")
-# axes[0].grid(True)
-
-# axes[1].bar(range(N), t_rms, color='orange')
-# axes[1].set_title("Translation residual RMS per image (mm)")
-# axes[1].set_ylabel("RMS (mm)")
-# axes[1].grid(True)
-
-# axes[2].plot(t_res[:, 0], label='tx')
-# axes[2].plot(t_res[:, 1], label='ty')
-# axes[2].plot(t_res[:, 2], label='tz')
-# axes[2].set_title("Translation residual components (mm)")
-# axes[2].set_ylabel("Error (mm)")
-# axes[2].legend()
-# axes[2].grid(True)
-
-# plt.tight_layout()
-# plt.show()
 
