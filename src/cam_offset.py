@@ -77,8 +77,8 @@ def inv_T(T):
 
 # T_VCv is Vicon frame to camera frame
 # T_VTv is Vicon frame to board frame
-T_VCv = build_transformations(rotations_cam,  cam_tL)   # (N, 4, 4)
-T_VTv = build_transformations(rotations_soho, soho_tL)  # (N, 4, 4)
+T_VCv = build_transformations( rotations_cam, cam_tL)   # (N, 4, 4)
+T_VTv = build_transformations( rotations_soho, soho_tL)  # (N, 4, 4)
 
 # ---------------------------------------------------------------
 # ChArUco Board Setup
@@ -119,7 +119,7 @@ def get_camera_to_board_pose(image, K, dist):
     T_CB = np.eye(4)
     R, _ = cv2.Rodrigues(rvec)
     T_CB[:3, :3] = R
-    T_CB[:3,  3] = tvec.flatten() #Convert m to mm
+    T_CB[:3,  3] = tvec.flatten() 
     return T_CB, rvec, tvec
 
 
@@ -220,6 +220,23 @@ def T_to_params(T):
 
 #     return np.concatenate(res)
 
+# def residuals(params, T_CB_array, T_VCv_array, T_VTv_array, w_rot=1.0, w_trans=1.0):
+#     T_CvC = params_to_T(params[:6])      
+#     T_TvT = params_to_T(params[6:])      
+#     T_CCv = inv_T(T_CvC)
+#     res = []
+#     for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
+        
+#         T_CvTv = inv_T(T_VCv) @ T_VTv
+#         T_CB_pred = T_CCv @ T_CvTv @ T_TvT
+
+#         # Split rotation (top-left 3x3) and translation (top-right 3x1)
+#         rot_diff   = (T_CB_obs[:3, :3] - T_CB_pred[:3, :3]).flatten() * w_rot
+#         trans_diff = (T_CB_obs[:3,  3] - T_CB_pred[:3,  3]).flatten() * w_trans
+
+#         res.append(np.concatenate([rot_diff, trans_diff]))
+#     return np.concatenate(res)
+
 def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
     T_CvC = params_to_T(params[:6])      
     T_TvT = params_to_T(params[6:])      
@@ -286,20 +303,40 @@ T0_target[:3, :3] = np.eye(3)
 T0_target[:3, 3]  = target_offset
 
 T0_flat = np.concatenate([T_to_params(T0_cam), T_to_params(T0_target)])
-T0_flat = np.zeros_like(T0_flat)  # Start from identity guess for both transforms
+
 ####### Manually Measured Offset Estimation for Initialization  ###########
 
 
 T_CB_array, valid_image_numbers = get_TCB_series(IMAGE_PATH, K, dist)
 
+
+
+for i, (num, T) in enumerate(zip(valid_image_numbers, T_CB_array)):
+    rvec, _ = cv2.Rodrigues(T[:3, :3])
+    angle = np.linalg.norm(rvec) * 180 / np.pi
+    tvec = T[:3, 3]
+    print(f"Image {num}: angle={angle:.1f}°  t={tvec}")
+
 # Keep only images that have a corresponding Vicon row
 common_numbers = [n for n in valid_image_numbers if n in image_numbers]
+
 T_CB_sync_idx  = [valid_image_numbers.index(n) for n in common_numbers]
+
 vicon_sync_idx = [image_numbers.index(n) for n in common_numbers]
 
 T_CB_sync  = T_CB_array[T_CB_sync_idx]
 T_VCv_sync = T_VCv[vicon_sync_idx]
 T_VTv_sync = T_VTv[vicon_sync_idx]
+
+outlier_indices = [3, 5, 7, 22, 26, 28, 30, 32, 37, 38, 47, 49]
+
+mask = np.ones(len(T_CB_sync), dtype=bool)
+mask[outlier_indices] = False
+
+T_CB_sync  = T_CB_sync[mask]
+T_VCv_sync = T_VCv_sync[mask]
+T_VTv_sync = T_VTv_sync[mask]
+common_numbers = [n for i, n in enumerate(common_numbers) if mask[i]]
 
 print(f"T_CB: {len(T_CB_sync)}, T_VCv: {len(T_VCv_sync)}, T_VTv: {len(T_VTv_sync)}")  
 
@@ -311,4 +348,16 @@ print(T_CvC)
 
 print("\nTarget in Vicon Target Frame:")
 print(T_TvT)
+# Residual per observation (should be small and uniform)
+res = result.fun.reshape(-1, 12)  # 12 residuals per image
+per_obs_cost = np.sum(res**2, axis=1)
+print("Per-observation costs:")
+for i, c in enumerate(per_obs_cost):
+    print(f"  Image {i}: {c:.6f}")
+
+# Flag outliers
+mean_cost = np.mean(per_obs_cost)
+for i, c in enumerate(per_obs_cost):
+    if c > 3 * mean_cost:
+        print(f"  WARNING: Image {i} is an outlier ({c:.4f} vs mean {mean_cost:.4f})")
 
