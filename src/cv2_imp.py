@@ -7,14 +7,14 @@ import pdb
 
 # ------------------------------
 # ENTER YOUR REQUIREMENTS HERE:
-ARUCO_DICT = cv2.aruco.DICT_6X6_250
-SQUARES_VERTICALLY = 11
-SQUARES_HORIZONTALLY = 8
-SQUARE_LENGTH = 0.03
+ARUCO_DICT = cv2.aruco.DICT_5X5_100
+SQUARES_VERTICALLY = 5
+SQUARES_HORIZONTALLY = 7
+SQUARE_LENGTH = 0.02
 MARKER_LENGTH = 0.015
 # ...
 # PATH_TO_YOUR_IMAGES = '/home/will/projects/CamCal/calibration_images'
-PATH_TO_YOUR_IMAGES = 'calibration_images/2025_11_11_timestamp_11_15_00'
+PATH_TO_YOUR_IMAGES = 'data/offset_images'
 # ------------------------------
 
 def calibrate_and_save_parameters():

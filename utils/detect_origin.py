@@ -3,10 +3,12 @@ import cv2.aruco as aruco
 import numpy as np
 import yaml
 import os 
+import csv
 
 IMAGE_DIR = "/home/will/projects/CamCal/data/offset_images"
 OUTPUT_DIR = "/home/will/projects/CamCal/data/origin_frame"
-CALIBRATION_DIR = "calibration.yaml"
+CALIBRATION_DIR = "configs/calibration.yaml"
+CSV_DIR = 'camera_poses.csv'
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -40,22 +42,28 @@ board = aruco.CharucoBoard(
     dictionary
 )
 count = 1
-for img in sorted(os.listdir(IMAGE_DIR)):
-
-    # Load image
-    img = cv2.imread(os.path.join(IMAGE_DIR, img))
+for img_name in sorted(os.listdir(IMAGE_DIR)):
+    img = cv2.imread(os.path.join(IMAGE_DIR, img_name))
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Detect markers
-    corners, ids, _ = aruco.detectMarkers(gray, dictionary)
 
-    # Interpolate charuco corners
+    corners, ids, _ = aruco.detectMarkers(gray, dictionary)
     retval, charucoCorners, charucoIds = aruco.interpolateCornersCharuco(
         corners, ids, gray, board
     )
+
     if charucoCorners is not None and charucoIds is not None and len(charucoIds) >= 4:
         success, rvec, tvec = aruco.estimatePoseCharucoBoard(
             charucoCorners, charucoIds, board, K, dist, None, None
         )
+        if success:
+            rv = rvec.flatten()
+            tv = tvec.flatten()
+            with open(CSV_DIR, 'a', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                if csvfile.tell() == 0:
+                    writer.writerow(["frame", "rvec_x", "rvec_y", "rvec_z", "tvec_x", "tvec_y", "tvec_z"])
+                writer.writerow([img_name, *rv, *tv])  # use actual filename
+
         print(f"Success: {success}, rvec: {rvec}, tvec: {tvec}")
     else:
         print("Skipping pose — insufficient corners")
@@ -68,5 +76,5 @@ for img in sorted(os.listdir(IMAGE_DIR)):
         tvec,
         0.05  # axis length in meters
     )
-    cv2.imwrite(os.path.join(OUTPUT_DIR, f"origin_frame_{count}.png"), img)
+    cv2.imwrite(os.path.join(OUTPUT_DIR, f"cal_image_{count}.png"), img)
     count += 1

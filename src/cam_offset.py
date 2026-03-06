@@ -9,6 +9,7 @@ import yaml
 import glob
 import re
 import matplotlib.pyplot as plt
+import json
 
 ######## Inputs ################
 IMAGE_PATH    = "/home/will/projects/CamCal/data/offset_images/"  # glob pattern
@@ -77,8 +78,8 @@ def inv_T(T):
 
 # T_VCv is Vicon frame to camera frame
 # T_VTv is Vicon frame to board frame
-T_VCv = build_transformations( rotations_cam, cam_tL)   # (N, 4, 4)
-T_VTv = build_transformations( rotations_soho, soho_tL)  # (N, 4, 4)
+T_VCv = build_transformations( rotations_cam, cam_tL   )  # (N, 4, 4)
+T_VTv = build_transformations( rotations_soho, soho_tL )  # (N, 4, 4)
 
 # ---------------------------------------------------------------
 # ChArUco Board Setup
@@ -211,31 +212,16 @@ def T_to_params(T):
 #         # Calculate the angle of rotation (clamping for numerical stability)
 #         cos_theta = (np.trace(R_diff) - 1.0) / 2.0
 #         angle_err = np.arccos(cos_theta)
+#         angle_err = cv2.Rodrigues(R_diff)[0]  # This gives the axis-angle vector, but we only use the angle magnitude here
 
 #         # 5. Append components
 #         # Note: We append the angle_err as a single value. 
 #         # To keep the Jacobian 'square-ish', you could also use Axis-Angle (3 values).
 #         # Here we use the 3 translation errors + 1 weighted scalar angle error.
-#         res.append(np.concatenate([t_err, [weight_rot * angle_err]]))
+#         res.append(np.concatenate([t_err, weight_rot * angle_err.flatten()]))
 
 #     return np.concatenate(res)
 
-# def residuals(params, T_CB_array, T_VCv_array, T_VTv_array, w_rot=1.0, w_trans=1.0):
-#     T_CvC = params_to_T(params[:6])      
-#     T_TvT = params_to_T(params[6:])      
-#     T_CCv = inv_T(T_CvC)
-#     res = []
-#     for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
-        
-#         T_CvTv = inv_T(T_VCv) @ T_VTv
-#         T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-
-#         # Split rotation (top-left 3x3) and translation (top-right 3x1)
-#         rot_diff   = (T_CB_obs[:3, :3] - T_CB_pred[:3, :3]).flatten() * w_rot
-#         trans_diff = (T_CB_obs[:3,  3] - T_CB_pred[:3,  3]).flatten() * w_trans
-
-#         res.append(np.concatenate([rot_diff, trans_diff]))
-#     return np.concatenate(res)
 
 def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
     T_CvC = params_to_T(params[:6])      
@@ -311,11 +297,11 @@ T_CB_array, valid_image_numbers = get_TCB_series(IMAGE_PATH, K, dist)
 
 
 
-for i, (num, T) in enumerate(zip(valid_image_numbers, T_CB_array)):
-    rvec, _ = cv2.Rodrigues(T[:3, :3])
-    angle = np.linalg.norm(rvec) * 180 / np.pi
-    tvec = T[:3, 3]
-    print(f"Image {num}: angle={angle:.1f}°  t={tvec}")
+# for i, (num, T) in enumerate(zip(valid_image_numbers, T_CB_array)):
+#     rvec, _ = cv2.Rodrigues(T[:3, :3])
+#     angle = np.linalg.norm(rvec) * 180 / np.pi
+#     tvec = T[:3, 3]
+#     print(f"Image {num}: angle={angle:.1f}°  t={tvec}")
 
 # Keep only images that have a corresponding Vicon row
 common_numbers = [n for n in valid_image_numbers if n in image_numbers]
@@ -328,7 +314,7 @@ T_CB_sync  = T_CB_array[T_CB_sync_idx]
 T_VCv_sync = T_VCv[vicon_sync_idx]
 T_VTv_sync = T_VTv[vicon_sync_idx]
 
-outlier_indices = [3, 5, 7, 22, 26, 28, 30, 32, 37, 38, 47, 49]
+outlier_indices = [19]
 
 mask = np.ones(len(T_CB_sync), dtype=bool)
 mask[outlier_indices] = False
@@ -348,6 +334,14 @@ print(T_CvC)
 
 print("\nTarget in Vicon Target Frame:")
 print(T_TvT)
+
+with open("offset_results.json", "w") as f:
+    json.dump({
+        "T_CvC": T_CvC.tolist(),
+        "T_TvT": T_TvT.tolist()
+    }, f, indent=4)
+
+print(result.fun.shape)
 # Residual per observation (should be small and uniform)
 res = result.fun.reshape(-1, 12)  # 12 residuals per image
 per_obs_cost = np.sum(res**2, axis=1)

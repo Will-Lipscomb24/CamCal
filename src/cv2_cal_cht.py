@@ -712,13 +712,6 @@ def _opencv_detect_points(img, cfg, aruco_dict=None, aruco_params=None):
         ret, centers = cv2.findCirclesGrid(gray, pattern_size, flags=flags)
         return ret, centers
 
-<<<<<<< HEAD:src/cv2_cal_cht.py
-    elif pt == "charuco":
-        corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=aruco_params)
-        charucoCorners, charucoIds, marker_corners, marker_ids = detector.detectBoard(image)
-        if len(corners) == 0: return False, None
-        nrows, ncols = cfg["board"]["rows"], cfg["board"]["cols"]
-=======
     elif p == "charuco":
         if not hasattr(cv2, "aruco"):
             raise RuntimeError("CharUco requested but cv2.aruco is missing (install opencv-contrib-python).")
@@ -735,7 +728,6 @@ def _opencv_detect_points(img, cfg, aruco_dict=None, aruco_params=None):
         if ids is None or len(corners) == 0:
             return False, None
 
->>>>>>> origin/main:cv2_cal_cht.py
         board = cv2.aruco.CharucoBoard(
             (int(cfg["board"]["cols"]), int(cfg["board"]["rows"])),
             float(cfg["board"]["square_size"]),

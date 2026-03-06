@@ -13,8 +13,8 @@ SQUARES_X     = 7          # columns
 SQUARES_Y     = 5          # rows
 SQUARE_LEN    = 20e-3      # meters
 MARKER_LEN    = 15e-3      # meters
-DICTIONARY    = cv2.aruco.DICT_5X5_100
-OUTPUT_YAML   = "calibration.yaml"
+DICTIONARY    = cv2.aruco.DICT_5X5_50
+OUTPUT_YAML   = "cam_calibraton.yaml"
 # ──────────────────────────────────────────────
 
 dictionary = aruco.getPredefinedDictionary(DICTIONARY)
