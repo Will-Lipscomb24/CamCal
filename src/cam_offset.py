@@ -1,4 +1,4 @@
-import os
+import os, shutil
 import csv
 import cv2
 import cv2.aruco as aruco
@@ -29,7 +29,7 @@ CALIBRATION_YAML_PATH   = DATA_FOLDER / "calibration.yaml"
 
 RESULT_PATH             = HERE / "results" / 'test_001'
 OPENCV_POSE_EST_PATH    = RESULT_PATH / "calc_camera_poses.csv"
-OUTPUT_JSON_PATH        = RESULT_PATH / "calc_offset_results.json"
+OUTPUT_JSON_PATH        = RESULT_PATH / "offset_results.json"
 REPROJECTION_DIR        = RESULT_PATH / "reprojection"
 
 SQUARES_X       = 9          # columns
@@ -39,7 +39,13 @@ MARKER_LEN      = 12e-3      # meters
 DICTIONARY      = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100)
 
 ########### Load Camera Intrinsics and Distortion Coeffiecients  ############
+if os.path.exists(RESULT_PATH):
+    print(f"Warning: {RESULT_PATH} already exists. Deleting and recreating.")
+    shutil.rmtree(RESULT_PATH)
+RESULT_PATH.mkdir(parents = True, exist_ok = True)
+REPROJECTION_DIR.mkdir(parents = True, exist_ok = True)
 IMAGE_PATH  = str(IMAGE_DIR)  # e.g. "data/images"
+
 with open(CALIBRATION_YAML_PATH) as f:
     data = yaml.safe_load(f)
 
@@ -305,7 +311,7 @@ print(T_CvC)
 print("\n Homogenous Transformation Matrix from Target Vicon to True Target Frame:")
 print(T_TvT)
 
-with open("offset_results.json", "w") as f:
+with open(OUTPUT_JSON_PATH, "w") as f:
     json.dump({
         "T_CvC": T_CvC.tolist(),
         "T_TvT": T_TvT.tolist()
@@ -324,3 +330,4 @@ mean_cost = np.mean(per_obs_cost)
 for i, c in enumerate(per_obs_cost):
     if c > 3 * mean_cost:
         print(f"  WARNING: Image {i} is an outlier ({c:.4f} vs mean {mean_cost:.4f})")
+print(f"Results saved to {RESULT_PATH} with offets at {OUTPUT_JSON_PATH}")
