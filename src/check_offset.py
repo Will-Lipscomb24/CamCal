@@ -126,7 +126,7 @@ def _process_vicon_offset_v01(row, T_CvC, T_TvT, vicon_keys):
 
     return q_C_2_T, r_Co2To_C, T_T_C
 
-def _process_vicon_offset_v03(row, T_CvC, T_TvT, vicon_keys):
+def _process_vicon_offset_v02(row, T_CvC, T_TvT, vicon_keys):
         """
         Process vicon data using passive rotation matrices and translation vectors
         
@@ -222,7 +222,7 @@ def _process_opencv_pose_v02(rvec, tvec):
     """Process OpenCV pose estimates as T_B_C = ^C T_B using cv2."""
     Rotm_C_B, _     = cv2.Rodrigues(rvec)
     q_C_2_B         = rotm2q(Rotm_C_B)
-    r_Co2Bo_C       = np.asarray(tvec, dtype=float).reshape(3,)
+    r_Co2Bo_C       = np.asarray(tvec, dtype = float).reshape(3,)
     T_B_C           = np.eye(4)
     T_B_C[:3, :3]   = Rotm_C_B
     T_B_C[:3, 3]    = r_Co2Bo_C
@@ -242,25 +242,27 @@ def _select_processor(processor_name, processor_map, processor_kind):
 ################################ Helper Functions ################################
 def main():
     HERE                = Path(__file__).parent.resolve()
+    PARENT              = HERE.parent 
     ##################################### Inputs #####################################
-    data_folder         = HERE / "artifacts" / "offset" / "expm_003"
-    data_name           = data_folder.name
-    image_folder        = data_folder / "images"
-    img_suffix          = '.png'
-    # kps_file is in mm
-    kps_file            = HERE / "artifacts" / "soho_reframed_mesh_pose_pack" / "mesh_points_50000.json" # origin shifted to edge
-    # kps_centered_file   = 
-    opencv_pose_est     = data_folder / "camera_poses.csv" # attitude and positon in meters
-    vicon_pose_est      = data_folder / "vicon_data.csv" # position in mm
-    calib_data          = data_folder / "calibration.yaml" # wrong, ANAND EDIT, what?
-    # calib_data          = data_folder / "calibration_2025_11_14.yaml" # a different calibration file
-    # offset_data         = data_folder / "offset_results.json"
-    offset_data         = data_folder / "offset_results_notation_branch.json"
-    # setup keys
-    res_path            = HERE / "results" / f'{data_name}_v001'
+    HERE                    = Path(__file__).resolve().parent
+    PARENT                  = HERE.parent
+    DATA_ROOT               = PARENT / "data" / "offset"
+    EXP_NAME                = "collection_001"
+    DATA_FOLDER             = DATA_ROOT / EXP_NAME
+    IMAGE_DIR               = DATA_FOLDER / "images"
+    IMG_SUFFIX              = ".png"
+    VICON_CSV_PATH          = DATA_FOLDER / "vicon_data.csv"
+    CALIBRATION_YAML_PATH   = DATA_FOLDER / "calibration.yaml"
+    # corresponding results path
+    RESULT_PATH             = PARENT / "results" / EXP_NAME
+    INPUT_JSON_PATH         = RESULT_PATH / "calc_offset_results.json"
+    INPUT_OPENCV_PATH       = RESULT_PATH / "calc_camera_poses.csv"
+    # output projections     
+    OUTPUT_PROJECTION_DIR   = RESULT_PATH / "reprojection"
+
 
     # choose type of vicon and opencv pose processing
-    selected_vicon_offset_processor = "v01"  # options: v01, v02, v03
+    selected_vicon_offset_processor = "v01"  # options: v01, v02
     selected_opencv_pose_processor  = "v02"  # options: v01, v02
     # camera parameters 
     img_width       = 4096 
@@ -310,8 +312,7 @@ def main():
 
     vicon_offset_processors = {
                                 "v01": _process_vicon_offset_v01,
-                                # "v02": _process_vicon_offset_v02,
-                                "v03": _process_vicon_offset_v03
+                                "v02": _process_vicon_offset_v02
                             }
 
     opencv_pose_processors  = {
