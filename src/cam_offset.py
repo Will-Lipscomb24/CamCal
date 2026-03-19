@@ -10,18 +10,37 @@ import glob
 import re
 import matplotlib.pyplot as plt
 import json
+from pathlib import Path
+import pdb
+
+
 
 ######## Inputs ################
-IMAGE_PATH    = "/home/will/projects/CamCal/data/offset_images/"  # glob pattern
-CONFIG_PATH    = "/home/will/projects/CamCal/configs/calibration.yaml"
-SQUARES_X     = 7          # columns
-SQUARES_Y     = 5          # rows
-SQUARE_LEN    = 20e-3      # meters
-MARKER_LEN    = 15e-3      # meters
-DICTIONARY = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100)
+HERE                    = Path(__file__).resolve().parent
+REPO_ROOT               = HERE.parent
+EXAMPLES_ROOT           = REPO_ROOT.parent / "sc-pose-utils" / "src" / "sc_pose" / "examples"
+
+DATA_FOLDER             = EXAMPLES_ROOT / "artifacts" / "offset" / "expm_003"
+DATA_NAME               = DATA_FOLDER.name
+IMAGE_DIR               = DATA_FOLDER / "images"
+IMG_SUFFIX              = ".png"
+VICON_CSV_PATH          = DATA_FOLDER / "vicon_data.csv"
+CALIBRATION_YAML_PATH   = DATA_FOLDER / "calibration.yaml"
+
+RESULT_PATH             = HERE / "results" / 'test_001'
+OPENCV_POSE_EST_PATH    = RESULT_PATH / "calc_camera_poses.csv"
+OUTPUT_JSON_PATH        = RESULT_PATH / "calc_offset_results.json"
+REPROJECTION_DIR        = RESULT_PATH / "reprojection"
+
+SQUARES_X       = 9          # columns
+SQUARES_Y       = 5          # rows
+SQUARE_LEN      = 17e-3      # meters
+MARKER_LEN      = 12e-3      # meters
+DICTIONARY      = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_100)
 
 ########### Load Camera Intrinsics and Distortion Coeffiecients  ############
-with open(CONFIG_PATH) as f:
+IMAGE_PATH  = str(IMAGE_DIR)  # e.g. "data/images"
+with open(CALIBRATION_YAML_PATH) as f:
     data = yaml.safe_load(f)
 
 K = np.array([
@@ -43,19 +62,27 @@ dist = np.array([
 # Load and Read Vicon CSV File 
 # ---------------------------------------------------------------
 
-with open("/home/will/projects/CamCal/data/vicon_data/vicon_data.csv", newline='') as f:
+with open(VICON_CSV_PATH, newline='') as f:
     rows = list(csv.DictReader(f))
 
 image_numbers = [int(r['image_number']) for r in rows]
 
-cam_tL  = np.array([[float(r['cam_x']),  float(r['cam_y']),  float(r['cam_z'])]  for r in rows])/1000
-soho_tL = np.array([[float(r['soho_x']), float(r['soho_y']), float(r['soho_z'])] for r in rows])/1000
-cam_qG  = np.array([[float(r['cam_qw']),  float(r['cam_qx']),  float(r['cam_qy']),  float(r['cam_qz'])]  for r in rows])
-soho_qG = np.array([[float(r['soho_qw']), float(r['soho_qx']), float(r['soho_qy']), float(r['soho_qz'])] for r in rows])
-
-rotations_cam  = R.from_quat(cam_qG,  scalar_first=True).as_matrix()
-rotations_soho = R.from_quat(soho_qG, scalar_first=True).as_matrix()
-
+cam_VCv_V       = np.array([[float(r['cam_x']),  float(r['cam_y']),  float(r['cam_z'])]  for r in rows])/1000
+soho_VTv_V      = np.array([[float(r['soho_x']), float(r['soho_y']), float(r['soho_z'])] for r in rows])/1000
+q_V_Cv          = np.array([[float(r['cam_qw']),  float(r['cam_qx']),  float(r['cam_qy']),  float(r['cam_qz'])]  for r in rows])
+q_V_Tv          = np.array([[float(r['soho_qw']), float(r['soho_qx']), float(r['soho_qy']), float(r['soho_qz'])] for r in rows])
+rotations_cam   = R.from_quat(q_V_Cv,  scalar_first=True).as_matrix()
+rotations_soho  = R.from_quat(q_V_Tv, scalar_first=True).as_matrix()
+from sc_pose.mathtils.quaternion import q2trfm, q2rotm
+Trfms_Cv_V      = np.zeros((len(q_V_Cv), 3, 3))
+Trfms_Tv_V      = np.zeros((len(q_V_Tv), 3, 3))
+for i in range(len(q_V_Cv)):
+    Trfms_Cv_V[i] = q2rotm(q_V_Cv[i])
+    Trfms_Tv_V[i] = q2rotm(q_V_Tv[i])
+sc1             = np.max(Trfms_Cv_V - rotations_cam)
+sc2             = np.max(Trfms_Tv_V - rotations_soho)
+print(f"Max difference between q2rotm and R.from_quat for camera: {sc1:.18f}")
+print(f"Max difference between q2rotm and R.from_quat for target: {sc2:.18f}")
 # ---------------------------------------------------------------
 # Build 4x4 Transforms from Vicon Data
 # ---------------------------------------------------------------
@@ -76,24 +103,22 @@ def inv_T(T):
    T_inv[:3, 3] = -R_transpose @ T[:3, 3]
    return T_inv
 
-# T_VCv is Vicon frame to camera frame
-# T_VTv is Vicon frame to board frame
-T_VCv = build_transformations( rotations_cam, cam_tL   )  # (N, 4, 4)
-T_VTv = build_transformations( rotations_soho, soho_tL )  # (N, 4, 4)
+T_CvV   = build_transformations( Trfms_Cv_V, cam_VCv_V   )  # (N, 4, 4)
+T_TvV   = build_transformations( Trfms_Tv_V, soho_VTv_V )  # (N, 4, 4)
 
 # ---------------------------------------------------------------
 # ChArUco Board Setup
 # ---------------------------------------------------------------
 
-board      = cv2.aruco.CharucoBoard((SQUARES_X, SQUARES_Y),
+board       = cv2.aruco.CharucoBoard((SQUARES_X, SQUARES_Y),
                                      SQUARE_LEN,
                                      MARKER_LEN,
                                      DICTIONARY)
-detector   = cv2.aruco.CharucoDetector(board)
+detector    = cv2.aruco.CharucoDetector(board)
 
 def get_camera_to_board_pose(image, K, dist):
-    img = cv2.imread(image)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img     = cv2.imread(image)
+    gray    = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     corners, ids, _ = aruco.detectMarkers(gray, DICTIONARY)
 
@@ -101,7 +126,7 @@ def get_camera_to_board_pose(image, K, dist):
         print(f"Skipping — insufficient markers: {os.path.basename(image)}")
         return None, None, None
 
-    retval, charucoCorners, charucoIds = aruco.interpolateCornersCharuco(
+    retval, charucoCorners, charucoIds  = aruco.interpolateCornersCharuco(
         corners, ids, gray, board
     )
 
@@ -117,32 +142,32 @@ def get_camera_to_board_pose(image, K, dist):
         print(f"Skipping — pose estimation failed: {os.path.basename(image)}")
         return None, None, None
 
-    T_CB = np.eye(4)
-    R, _ = cv2.Rodrigues(rvec)
-    T_CB[:3, :3] = R
-    T_CB[:3,  3] = tvec.flatten() 
-    return T_CB, rvec, tvec
+    T_BC            = np.eye(4)
+    Trfm_B_C, _     = cv2.Rodrigues(rvec)
+    T_BC[:3, :3]    = Trfm_B_C
+    T_BC[:3, 3]     = tvec.flatten() 
+    return T_BC, rvec, tvec
 
 
 # Obtain a stack of the T_CB transformation for all of the images
-def get_TCB_series(image_dir, K, dist):
+def get_TBC_series(image_dir, K, dist):
     image_paths = sorted(
         glob.glob(os.path.join(image_dir, "*.png")),
-        key=lambda x: int(re.search(r'(\d+)', x).group(1))
+        key=lambda x: int(re.search(r'(\d+)', Path(x).stem).group(1))
     )
-    T_CB_list, valid_image_numbers = [], []
+    T_BC_list, valid_image_numbers = [], []
 
     for path in image_paths:
-        img_num = int(re.search(r'(\d+)', path).group(1))  # e.g. 1,2,3,5...
-        T_CB, _, _ = get_camera_to_board_pose(path, K, dist)
-        if T_CB is None:
+        img_num = int(re.search(r'(\d+)', Path(path).stem).group(1))  # e.g. 1,2,3,5...
+        T_BC, _, _ = get_camera_to_board_pose(path, K, dist)
+        if T_BC is None:
             print(f"Detection failed: {os.path.basename(path)}")
             continue
-        T_CB_list.append(T_CB)
+        T_BC_list.append(T_BC)
         valid_image_numbers.append(img_num)
 
-    print(f"Processed {len(T_CB_list)} / {len(image_paths)} images successfully")
-    return np.stack(T_CB_list), valid_image_numbers
+    print(f"Processed {len(T_BC_list)} / {len(image_paths)} images successfully")
+    return np.stack(T_BC_list), valid_image_numbers
 # ---------------------------------------------------------------
 # RWHE Helpers
 # ---------------------------------------------------------------
@@ -161,86 +186,37 @@ def rvec_to_T(rvec, tvec):
 
 def params_to_T(p):
     """Converts 6 params (3 rot, 3 trans) to 4x4 matrix"""
-    T = np.eye(4)
-    R, _ = cv2.Rodrigues(p[:3])
-    T[:3, :3] = R
-    T[:3, 3] = p[3:]
+    T           = np.eye(4)
+    R, _        = cv2.Rodrigues(p[:3])
+    T[:3, :3]   = R
+    T[:3, 3]    = p[3:]
     return T
 
 def T_to_params(T):
     """Convert 4x4 transform to 6-param vector [rvec(3), tvec(3)]"""
-    rvec, _ = cv2.Rodrigues(T[:3, :3])
-    tvec = T[:3, 3]
+    rvec, _     = cv2.Rodrigues(T[:3, :3])
+    tvec        = T[:3, 3]
     return np.hstack([rvec.flatten(), tvec.flatten()])
 
 
-# def residuals(params, T_CB_array, T_VCv_array, T_VTv_array, weight_rot=1.0):
-#     """
-#     Geodesic residual function.
-#     params: 12-element vector [x, y, z, rx, ry, rz] for CvC and TvT
-#     weight_rot: scalar to balance translation (e.g., meters) vs rotation (radians)
-#     """
-#     T_CvC = params_to_T(params[:6])      # Cv ← C
-#     T_TvT = params_to_T(params[6:])      # Tv ← T
-    
-#     # Pre-calculate inverse if needed for the chain
-#     T_CCv = inv_T(T_CvC)
-    
-#     res = []
+def residuals(params, T_BC_array, T_CvV_array, T_TvV_array):
+    T_CvC   = params_to_T(params[:6])
+    T_TvT   = params_to_T(params[6:])
+    res     = []
 
-#     for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
-#         # 1. Calculate Predicted Transformation
-#         # Cv ← Tv
-#         T_CvTv = inv_T(T_VCv) @ T_VTv
-#         # Predicted: B ← C
-#         T_CB_pred = T_CCv @ T_CvTv @ T_TvT
+    for T_BC_obs, T_CvV, T_TvV in zip(T_BC_array, T_CvV_array, T_TvV_array):
 
-#         # 2. Extract Rotation and Translation
-#         R_obs = T_CB_obs[:3, :3]
-#         t_obs = T_CB_obs[:3, 3]
+        # T_CCv = inv_T(T_CvC)
+        # # 1. Prediction Chain
+        # T_TvCv = inv_T(T_VCv) @ T_VTv
+        # T_BC_pred = T_CCv @ T_CvTv @ T_TvT
+
+        # # 2. Matrix Difference (Algebraic)
+        # # We only use the top 3x4 block because the bottom row is [0,0,0,1] 
+        # # for both, meaning the difference is always zero (useless for the solver).
         
-#         R_pred = T_CB_pred[:3, :3]
-#         t_pred = T_CB_pred[:3, 3]
-
-#         # 3. Translation Residual (3 components)
-#         t_err = t_obs - t_pred
-
-#         # 4. Rotation Residual (Geodesic distance / Angle)
-#         # The relative rotation R_diff takes us from Pred to Obs
-#         R_diff = R_obs.T @ R_pred
-        
-#         # Calculate the angle of rotation (clamping for numerical stability)
-#         cos_theta = (np.trace(R_diff) - 1.0) / 2.0
-#         angle_err = np.arccos(cos_theta)
-#         angle_err = cv2.Rodrigues(R_diff)[0]  # This gives the axis-angle vector, but we only use the angle magnitude here
-
-#         # 5. Append components
-#         # Note: We append the angle_err as a single value. 
-#         # To keep the Jacobian 'square-ish', you could also use Axis-Angle (3 values).
-#         # Here we use the 3 translation errors + 1 weighted scalar angle error.
-#         res.append(np.concatenate([t_err, weight_rot * angle_err.flatten()]))
-
-#     return np.concatenate(res)
-
-
-def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
-    T_CvC = params_to_T(params[:6])      
-    T_TvT = params_to_T(params[6:])      
-    
-    
-    res = []
-
-    for T_CB_obs, T_VCv, T_VTv in zip(T_CB_array, T_VCv_array, T_VTv_array):
-
-        T_CCv = inv_T(T_CvC)
-        # 1. Prediction Chain
-        T_CvTv = inv_T(T_VCv) @ T_VTv
-        T_CB_pred = T_CCv @ T_CvTv @ T_TvT
-
-        # 2. Matrix Difference (Algebraic)
-        # We only use the top 3x4 block because the bottom row is [0,0,0,1] 
-        # for both, meaning the difference is always zero (useless for the solver).
-        diff = T_CB_obs[:3, :] - T_CB_pred[:3, :]
+        T_BC_pred   = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
+        diff        = T_BC_obs[:3, :] - T_BC_pred[:3, :]
         
         # 3. Flatten into 12 residuals per observation
         # The sum of squares of these 12 values == Frobenius Norm Squared
@@ -250,7 +226,7 @@ def residuals(params, T_CB_array, T_VCv_array, T_VTv_array):
 
 
 
-def solve_rwhe(T0_flat, T_CB_array, T_VCv, T_VTv):
+def solve_rwhe(T0_flat, T_BC_array, T_CvV_array, T_TvV_array):
     """
     Jointly solves for T_CSC and T_TST via Levenberg-Marquardt.
 
@@ -259,15 +235,15 @@ def solve_rwhe(T0_flat, T_CB_array, T_VCv, T_VTv):
         T_TST  (4x4) — board/target frame   → Vicon target marker frame
         result       — full scipy OptimizeResult
     """
-    print(f"Solving RWHE with {len(T_CB_array)} measurements...")
+    print(f"Solving RWHE with {len(T_BC_array)} measurements...")
 
-    res0 = residuals(T0_flat, T_CB_array, T_VCv, T_VTv)
+    res0 = residuals(T0_flat, T_BC_array, T_CvV_array, T_TvV_array)
     print(f"Initial cost: {0.5 * np.sum(res0**2):.6f}")
 
     result = least_squares(
         residuals,
         T0_flat,
-        args=(T_CB_array, T_VCv, T_VTv),
+        args=(T_BC_array, T_CvV_array, T_TvV_array),
         method='lm',
         verbose=1
     )
@@ -279,60 +255,54 @@ def solve_rwhe(T0_flat, T_CB_array, T_VCv, T_VTv):
     return T_CvC, T_TvT, result
 
 ####### Manually Measured Offset Estimation for Initialization  ###########
-T0_cam = np.eye(4)
-T0_cam[:3, :3] = np.eye(3)
-T0_cam[:3, 3]  = np.array([0, 0, 0])
+T0_cam              = np.eye(4)
+T0_cam[:3, :3]      = np.eye(3)
+T0_cam[:3, 3]       = np.array([0, 0, 0])
 
-target_offset = np.array([-228, -55, 30])/1000  
-T0_target = np.eye(4)
-T0_target[:3, :3] = np.eye(3)
-T0_target[:3, 3]  = target_offset
-
-T0_flat = np.concatenate([T_to_params(T0_cam), T_to_params(T0_target)])
+target_offset       = np.array([-228, -55, 30])/1000  
+T0_target           = np.eye(4)
+T0_target[:3, :3]   = np.eye(3)
+T0_target[:3, 3]    = target_offset
+T0_flat             = np.concatenate([T_to_params(T0_cam), T_to_params(T0_target)])
 
 ####### Manually Measured Offset Estimation for Initialization  ###########
 
 
-T_CB_array, valid_image_numbers = get_TCB_series(IMAGE_PATH, K, dist)
+T_BC_array, valid_image_numbers = get_TBC_series(IMAGE_PATH, K, dist)
 
-
-
-# for i, (num, T) in enumerate(zip(valid_image_numbers, T_CB_array)):
-#     rvec, _ = cv2.Rodrigues(T[:3, :3])
-#     angle = np.linalg.norm(rvec) * 180 / np.pi
-#     tvec = T[:3, 3]
-#     print(f"Image {num}: angle={angle:.1f}°  t={tvec}")
 
 # Keep only images that have a corresponding Vicon row
-common_numbers = [n for n in valid_image_numbers if n in image_numbers]
+common_numbers  = [n for n in valid_image_numbers if n in image_numbers]
 
-T_CB_sync_idx  = [valid_image_numbers.index(n) for n in common_numbers]
+T_BC_sync_idx   = [valid_image_numbers.index(n) for n in common_numbers]
 
-vicon_sync_idx = [image_numbers.index(n) for n in common_numbers]
+vicon_sync_idx  = [image_numbers.index(n) for n in common_numbers]
 
-T_CB_sync  = T_CB_array[T_CB_sync_idx]
-T_VCv_sync = T_VCv[vicon_sync_idx]
-T_VTv_sync = T_VTv[vicon_sync_idx]
+T_BC_sync       = T_BC_array[T_BC_sync_idx]
+T_CvV_sync      = T_CvV[vicon_sync_idx]
+T_TvV_sync      = T_TvV[vicon_sync_idx]
 
-outlier_indices = [19]
+outlier_image_numbers   = [42, 43, 44, 45, 46, 47] # hold out
 
-mask = np.ones(len(T_CB_sync), dtype=bool)
-mask[outlier_indices] = False
+mask    = np.ones(len(T_BC_sync), dtype=bool)
+for i, image_number in enumerate(common_numbers):
+    if image_number in outlier_image_numbers:
+        mask[i] = False
 
-T_CB_sync  = T_CB_sync[mask]
-T_VCv_sync = T_VCv_sync[mask]
-T_VTv_sync = T_VTv_sync[mask]
-common_numbers = [n for i, n in enumerate(common_numbers) if mask[i]]
+T_BC_sync       = T_BC_sync[mask]
+T_CvV_sync      = T_CvV_sync[mask]
+T_TvV_sync      = T_TvV_sync[mask]
+common_numbers  = [n for i, n in enumerate(common_numbers) if mask[i]]
 
-print(f"T_CB: {len(T_CB_sync)}, T_VCv: {len(T_VCv_sync)}, T_VTv: {len(T_VTv_sync)}")  
+print(f"T_BC: {len(T_BC_sync)}, T_CvV: {len(T_CvV_sync)}, T_TvV: {len(T_TvV_sync)}")  
 
 
 # 3. Solve
-T_CvC, T_TvT, result = solve_rwhe(T0_flat, T_CB_sync, T_VCv_sync, T_VTv_sync)
-print("\nCamera in Vicon Camera Frame:")
+T_CvC, T_TvT, result = solve_rwhe(T0_flat, T_BC_sync, T_CvV_sync, T_TvV_sync)
+print("\n Homogenous Transformation Matrix from Camera Vicon to True Camera Frame:")
 print(T_CvC)
 
-print("\nTarget in Vicon Target Frame:")
+print("\n Homogenous Transformation Matrix from Target Vicon to True Target Frame:")
 print(T_TvT)
 
 with open("offset_results.json", "w") as f:
@@ -354,4 +324,3 @@ mean_cost = np.mean(per_obs_cost)
 for i, c in enumerate(per_obs_cost):
     if c > 3 * mean_cost:
         print(f"  WARNING: Image {i} is an outlier ({c:.4f} vs mean {mean_cost:.4f})")
-
