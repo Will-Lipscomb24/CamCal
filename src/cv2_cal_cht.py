@@ -42,6 +42,13 @@ def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
 
+def reset_output_dir(p: Path):
+    if p.exists():
+        print(f"[INFO] Removing existing results directory: {p}")
+        shutil.rmtree(p)
+    p.mkdir(parents=True, exist_ok=True)
+
+
 def pose_from_rvec_tvec(rvec, tvec):
     """
     OpenCV pose semantics (explicit):
@@ -649,6 +656,74 @@ def _opencv_build_pinhole_flags(cfg):
     return flags
 
 
+def _opencv_build_auto_init_K(imsize, ocv_init):
+    """
+    Build a simple pinhole seed K when the caller wants OpenCV to honor
+    aspect-ratio constraints but did not provide a full 3x3 matrix.
+    """
+    w, h            = int(imsize[0]), int(imsize[1])
+    focal_px        = ocv_init.get("focal_px", None)
+    aspect_ratio    = float(ocv_init.get("aspect_ratio", 1.0))
+    alpha           = float(ocv_init.get("alpha", 0.0))
+    cx              = float(ocv_init.get("cx", (w - 1) / 2.0))
+    cy              = float(ocv_init.get("cy", (h - 1) / 2.0))
+
+    if focal_px is None:
+        focal_px = float(max(w, h))
+    else:
+        focal_px = float(focal_px)
+
+    fy              = focal_px
+    fx              = aspect_ratio * fy
+
+    return np.array(
+        [
+            [fx, alpha, cx],
+            [0.0, fy,    cy],
+            [0.0, 0.0,   1.0],
+        ],
+        dtype=float,
+    )
+
+
+def _opencv_prepare_initial_guess(cfg, imsize, flags):
+    """
+    Prepare OpenCV cameraMatrix / distCoeffs seeds. When FIX_ASPECT_RATIO is
+    requested, OpenCV needs a meaningful initial focal-length ratio in K.
+    """
+    camM            = None
+    dist0           = None
+    ocv_init        = cfg.get("opencv_init", {})
+
+    if "K" in ocv_init and ocv_init["K"] is not None:
+        K_init = np.array(ocv_init["K"], float)
+        if K_init.shape == (3, 3):
+            camM = K_init.copy()
+
+    if "D" in ocv_init and ocv_init["D"] is not None:
+        D_init = np.array(ocv_init["D"], float).reshape(-1, 1)
+        dist0 = D_init
+
+    needs_auto_K = (
+        camM is None and
+        (
+            bool(flags & cv2.CALIB_FIX_ASPECT_RATIO) or
+            any(k in ocv_init for k in ["focal_px", "aspect_ratio", "alpha", "cx", "cy"])
+        )
+    )
+    if needs_auto_K:
+        camM = _opencv_build_auto_init_K(imsize, ocv_init)
+        print(
+            "[INFO] Built automatic OpenCV init K for aspect-ratio-constrained solve: "
+            f"fx={camM[0,0]:.3f}, fy={camM[1,1]:.3f}, cx={camM[0,2]:.3f}, cy={camM[1,2]:.3f}"
+        )
+
+    if camM is not None or dist0 is not None:
+        flags |= cv2.CALIB_USE_INTRINSIC_GUESS
+
+    return camM, dist0, flags
+
+
 def _opencv_pattern_points(board_cfg):
     rows = int(board_cfg["rows"])
     cols = int(board_cfg["cols"])
@@ -949,19 +1024,10 @@ def run_opencv_from_yaml(cfg, cfg_path):
     # Build flags (includes rational model if requested)
     flags = _opencv_build_pinhole_flags(cfg)
 
-    # Optional seeding: if K/D provided, fix-held params are pinned to those initial values
-    camM = None
-    dist0 = None
-    ocv_init = cfg.get("opencv_init", {})
-    if "K" in ocv_init and ocv_init["K"] is not None:
-        K_init = np.array(ocv_init["K"], float)
-        if K_init.shape == (3, 3):
-            camM = K_init.copy()
-    if "D" in ocv_init and ocv_init["D"] is not None:
-        D_init = np.array(ocv_init["D"], float).reshape(-1, 1)
-        dist0 = D_init
-    if camM is not None or dist0 is not None:
-        flags |= cv2.CALIB_USE_INTRINSIC_GUESS
+    # Optional seeding: if K/D provided, fix-held params are pinned to those initial values.
+    # For FIX_ASPECT_RATIO, we auto-build a simple K seed if the config only supplies
+    # focal/aspect/principal-point scalars instead of a full 3x3.
+    camM, dist0, flags = _opencv_prepare_initial_guess(cfg, imsize, flags)
 
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iter, eps)
 
@@ -1043,6 +1109,7 @@ def run_opencv_from_yaml(cfg, cfg_path):
             print("  -", w)
 
     outdir = Path(cfg["output"]["dir"])
+    reset_output_dir(outdir)
     _outputs_opencv(cfg, imsize, K, D, rms, flags, charuco_geometry, outdir, warnings=sanity)
     
     try:
@@ -1282,6 +1349,7 @@ def run_scipy_from_yaml(cfg, cfg_path):
             print("  -", w)
 
     outdir = Path(cfg["output"]["dir"])
+    reset_output_dir(outdir)
     _outputs_scipy(cfg, Kopt, Dopt, qopt, rms, outdir, warnings=sanity)
     try:
         shutil.copy(cfg_path, outdir / f"config_used_{cfg_path.stem}.yaml")
@@ -1296,11 +1364,38 @@ def run_scipy_from_yaml(cfg, cfg_path):
 def main():
     ap          = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--fix-aspect-ratio", action="store_true",
+                    help="Override config and enable cv2.CALIB_FIX_ASPECT_RATIO.")
+    ap.add_argument("--no-fix-aspect-ratio", action="store_true",
+                    help="Override config and disable cv2.CALIB_FIX_ASPECT_RATIO.")
+    ap.add_argument("--init-focal-px", type=float, default=None,
+                    help="Seed focal length in pixels used to auto-build OpenCV init K when needed.")
+    ap.add_argument("--aspect-ratio", type=float, default=None,
+                    help="Seed fx/fy ratio for CALIB_FIX_ASPECT_RATIO. Defaults to 1.0 for square pixels.")
+    ap.add_argument("--init-cx", type=float, default=None,
+                    help="Seed principal point cx used when auto-building OpenCV init K.")
+    ap.add_argument("--init-cy", type=float, default=None,
+                    help="Seed principal point cy used when auto-building OpenCV init K.")
     args = ap.parse_args()
     cfg_path = Path(args.config).resolve()
 
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
+
+    cfg.setdefault("flags", {})
+    cfg.setdefault("opencv_init", {})
+    if args.fix_aspect_ratio:
+        cfg["flags"]["fix_aspect_ratio"] = True
+    if args.no_fix_aspect_ratio:
+        cfg["flags"]["fix_aspect_ratio"] = False
+    if args.init_focal_px is not None:
+        cfg["opencv_init"]["focal_px"] = float(args.init_focal_px)
+    if args.aspect_ratio is not None:
+        cfg["opencv_init"]["aspect_ratio"] = float(args.aspect_ratio)
+    if args.init_cx is not None:
+        cfg["opencv_init"]["cx"] = float(args.init_cx)
+    if args.init_cy is not None:
+        cfg["opencv_init"]["cy"] = float(args.init_cy)
 
     mode = cfg["mode"].lower()
     if mode == "opencv":
@@ -1313,3 +1408,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/miniforge3/envs/neurals/bin/python src/cv2_cal_cht.py \
+#   --config /home/saa4743/agnc_repos/CamCal/configs/collection_001_cal_cht.yaml \
+#   --fix-aspect-ratio \
+#   --init-focal-px 7600 \
+#   --aspect-ratio 1.0
