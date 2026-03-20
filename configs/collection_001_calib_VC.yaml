@@ -1,0 +1,70 @@
+mode: "opencv"
+
+data:
+  images_glob_dir: "/home/saa4743/agnc_repos/CamCal/data/offset/collection_001/images"
+  glob: "*.png"
+
+board:
+  pattern: "charuco"
+  rows: 5
+  cols: 9
+  square_size: 0.017
+
+charuco:
+  dictionary: "DICT_5X5_100"
+  marker_size: 0.012
+
+detector:
+  refine_subpix: true
+  preprocess:
+    clahe: false
+    blur_ksize: 0
+
+solver:
+  max_iter: 200
+  eps: 1.0e-8
+
+fisheye:
+  enable: false
+  recompute_extrinsic: true
+  fix_skew: false
+  fix_k1k2k3k4: false
+
+flags:
+  use_intrinsic_guess: false
+  fix_principal_point: false
+  fix_aspect_ratio: false
+  zero_tangent_dist: false
+  rational_model: false
+  thin_prism_model: false
+  tilted_model: false
+  fix_k1: false
+  fix_k2: false
+  fix_k3: true
+  fix_k4: true
+  fix_k5: true
+  fix_k6: true
+  fix_s1_s2_s3_s4: false
+  fix_taux_tauy: false
+  fix_focal_length: false
+  fix_skew: false
+
+modeling:
+  rational_model: null
+
+opencv_init:
+  K: null
+  D: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  focal_px: 7600.0
+  aspect_ratio: 1.0
+
+output:
+  dir: "/home/saa4743/agnc_repos/CamCal/results/collection_001/calib"
+  json: "calibration.json"
+  yaml: "calibration.yaml"
+  save_undistorted_preview: true
+  save_reprojection_preview: true
+  max_reprojection_images: 20
+  image_size_hint:
+    w: 4096
+    h: 3000
