@@ -145,6 +145,7 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
         values = pd.to_numeric(frame_metrics_df[column], errors = "coerce").to_numpy(dtype = float)
         summary[f"{column}_mean"] = float(np.nanmean(values))
         summary[f"{column}_median"] = float(np.nanmedian(values))
+        summary[f"{column}_std"] = float(np.nanstd(values))
         summary[f"{column}_max_abs"] = float(np.nanmax(np.abs(values)))
         summary[f"{column}_rmse"] = float(np.sqrt(np.nanmean(values * values)))
     return summary
@@ -188,15 +189,38 @@ def write_error_histograms(
         else:
             counts, bin_edges   = np.histogram(values, bins = num_bins)
 
+        mean_value           = float(np.mean(values))
+        median_value         = float(np.median(values))
+        std_value            = float(np.std(values))
+
         fig, ax = plt.subplots(figsize = (8, 5), dpi = 140)
         ax.hist(values, bins = bin_edges, color = "#2a6f97", edgecolor = "black", alpha = 0.85)
-        ax.axvline(float(np.mean(values)), color = "#d62828", linestyle = "--", linewidth = 2, label = "mean")
-        ax.axvline(float(np.median(values)), color = "#f77f00", linestyle = "-.", linewidth = 2, label = "median")
+        ax.axvline(mean_value, color = "#d62828", linestyle = "--", linewidth = 2, label = "mean")
+        ax.axvline(median_value, color = "#f77f00", linestyle = "-.", linewidth = 2, label = "median")
+        if std_value > 0.0:
+            ax.axvline(mean_value - std_value, color = "#6a4c93", linestyle = ":", linewidth = 1.75, label = "mean - std")
+            ax.axvline(mean_value + std_value, color = "#6a4c93", linestyle = ":", linewidth = 1.75, label = "mean + std")
+            ax.axvspan(mean_value - std_value, mean_value + std_value, color = "#6a4c93", alpha = 0.08)
         ax.set_title(plot_title)
         ax.set_xlabel(x_label)
         ax.set_ylabel("Count")
         ax.grid(True, alpha = 0.25)
         ax.legend(loc = "best")
+        stat_text = f"mean = {mean_value:.6g}\nstd = {std_value:.6g}"
+        ax.text(
+                    0.98,
+                    0.97,
+                    stat_text,
+                    transform = ax.transAxes,
+                    ha = "right",
+                    va = "top",
+                    bbox = {
+                                "boxstyle"  : "round",
+                                "facecolor" : "white",
+                                "alpha"     : 0.85,
+                                "edgecolor" : "#666666",
+                           },
+               )
         fig.tight_layout()
 
         hist_path = output_dir / f"{column_name}_hist.png"
@@ -209,9 +233,9 @@ def write_error_histograms(
                                             "num_samples"        : int(values.size),
                                             "min"                : float(np.min(values)),
                                             "max"                : float(np.max(values)),
-                                            "mean"               : float(np.mean(values)),
-                                            "median"             : float(np.median(values)),
-                                            "std"                : float(np.std(values)),
+                                            "mean"               : mean_value,
+                                            "median"             : median_value,
+                                            "std"                : std_value,
                                             "bin_edges"          : bin_edges.astype(float).tolist(),
                                             "counts"             : counts.astype(int).tolist(),
                                          }
@@ -260,7 +284,7 @@ def write_topic_yamls(
                         topic_names    : list[str],
                         output_dir     : Path,
                      ) -> dict[str, object]:
-    """ Write lightweight YAML summaries for the rosbag topics this workflow consumes """
+    """ Write YAML dumps for the rosbag topics this workflow consumes """
     bag_dir      = Path(bag_dir)
     output_dir   = Path(output_dir)
     output_dir.mkdir(parents = True, exist_ok = True)
@@ -278,6 +302,7 @@ def write_topic_yamls(
             first_header_stamp_ns    = None
             last_header_stamp_ns     = None
             example_message          = None
+            all_messages             = []
 
             for connection, timestamp, rawdata in reader.messages(connections = connections):
                 bag_time_ns = int(timestamp)
@@ -286,14 +311,27 @@ def write_topic_yamls(
                 last_bag_time_ns = bag_time_ns
 
                 msg = reader.deserialize(rawdata, connection.msgtype)
+                msg_builtin = _ros_value_to_builtin(msg)
                 if example_message is None:
-                    example_message = _ros_value_to_builtin(msg)
+                    example_message = msg_builtin
 
                 if hasattr(msg, "header") and hasattr(msg.header, "stamp"):
                     header_stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
                     if first_header_stamp_ns is None:
                         first_header_stamp_ns = header_stamp_ns
                     last_header_stamp_ns = header_stamp_ns
+                else:
+                    header_stamp_ns = None
+
+                all_messages.append(
+                                    {
+                                        "bag_time_ns"       : int(bag_time_ns),
+                                        "bag_time_s"        : float(bag_time_ns) / 1e9,
+                                        "header_stamp_ns"   : int(header_stamp_ns) if header_stamp_ns is not None else None,
+                                        "header_stamp_s"    : float(header_stamp_ns) / 1e9 if header_stamp_ns is not None else None,
+                                        "message"           : msg_builtin,
+                                    }
+                                   )
 
                 msg_count += 1
 
@@ -312,6 +350,7 @@ def write_topic_yamls(
                                 "last_header_stamp_ns"     : int(last_header_stamp_ns) if last_header_stamp_ns is not None else None,
                                 "last_header_stamp_s"      : float(last_header_stamp_ns) / 1e9 if last_header_stamp_ns is not None else None,
                                 "example_message"          : example_message,
+                                "messages"                 : all_messages,
                             }
 
             topic_filename = topic_name.strip("/").replace("/", "__") + ".yaml"
