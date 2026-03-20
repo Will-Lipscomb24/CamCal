@@ -75,6 +75,21 @@ def T_T_C_to_pose(T_T_C: NDArray[np.floating]) -> tuple[NDArray[np.float64], NDA
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM
 
 
+def apply_target_origin_shift_to_T_T_C(
+                                            T_T_C               : NDArray[np.floating],
+                                            target_offset_m     : NDArray[np.floating],
+                                      ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """ Shift the target origin by a translation expressed in the target frame """
+    T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
+    target_offset_m         = np.asarray(target_offset_m, dtype = np.float64).reshape(3,)
+    T_T_C_shifted           = np.array(T_T_C, dtype = np.float64, copy = True)
+    Rotm_T_2_C              = T_T_C_shifted[:3, :3]
+    T_T_C_shifted[:3, 3]    = T_T_C_shifted[:3, 3] + Rotm_T_2_C @ target_offset_m
+
+    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T_C_shifted)
+    return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T_C_shifted
+
+
 def opencv_rvec_tvec_to_T_T_C(
                                 rvec: NDArray[np.floating],
                                 tvec: NDArray[np.floating],
@@ -336,4 +351,3 @@ def solve_rwhe(
 def per_observation_costs(result: object) -> NDArray[np.float64]:
     residual_matrix = np.asarray(result.fun, dtype = np.float64).reshape(-1, 12)
     return np.sum(residual_matrix ** 2, axis = 1)
-

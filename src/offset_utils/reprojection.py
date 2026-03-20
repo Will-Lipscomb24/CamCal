@@ -11,11 +11,23 @@ from numpy.typing import NDArray
 from sc_pose.sensors.camera_projections import PoseProjector, draw_uv_points_on_image
 
 
-def load_target_points(kps_file: Path, with_origin: bool = True) -> NDArray[np.float64]:
-    """ Load target keypoints from json and convert mm -> m """
+def load_target_points(
+                            kps_file     : Path,
+                            with_origin  : bool = True,
+                            units        : str = "mm",
+                      ) -> NDArray[np.float64]:
+    """ Load target keypoints from json and convert the declared units to meters """
     with Path(kps_file).open("r", encoding = "utf-8") as handle:
-        kps_mm = np.asarray(json.load(handle), dtype = np.float64)
-    points_m = kps_mm / 1e3
+        kps_xyz = np.asarray(json.load(handle), dtype = np.float64)
+
+    units_norm = str(units).strip().lower()
+    if units_norm in {"mm", "millimeter", "millimeters"}:
+        points_m = kps_xyz / 1e3
+    elif units_norm in {"m", "meter", "meters"}:
+        points_m = kps_xyz
+    else:
+        raise ValueError(f"Unsupported keypoint units: {units}")
+
     if with_origin:
         points_m = np.vstack((np.zeros((1, 3), dtype = np.float64), points_m))
     return points_m
@@ -338,4 +350,3 @@ def write_overlay_stats(
     with json_path.open("w", encoding = "utf-8") as handle:
         json.dump(overlay_stats, handle, indent = 4)
     return csv_path, json_path
-

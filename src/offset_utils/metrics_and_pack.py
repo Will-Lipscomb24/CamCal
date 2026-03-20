@@ -460,13 +460,17 @@ def write_trajectory_pack(
                             image_width_px       : int,
                             image_height_px      : int,
                             pose_key             : str = "pose",
+                            pack_dir_name        : str = "trajectory_pack",
+                            lifted_filename      : str = "trajectory_lifted.json",
+                            metadata_extras      : dict[str, object] | None = None,
                          ) -> tuple[Path, Path]:
     """ Write a nav_ros-style trajectory pack from offset-adjusted truth """
     output_dir       = Path(output_dir)
-    traj_dir         = output_dir / "trajectory_pack"
+    traj_dir         = output_dir / str(pack_dir_name)
     if traj_dir.exists():
         shutil.rmtree(traj_dir)
     traj_dir.mkdir(parents = True, exist_ok = True)
+    metadata_extras  = {} if metadata_extras is None else dict(metadata_extras)
 
     lifted_records   = []
     for idx, record in enumerate(frame_records):
@@ -477,7 +481,6 @@ def write_trajectory_pack(
         shutil.copy2(src_image_path, out_img_path)
 
         q_CAM_2_TARGET    = np.asarray(record["q_CAM_2_TARGET"], dtype = float).reshape(4,)
-        q_TARGET_2_CAM    = np.asarray(record["q_TARGET_2_CAM"], dtype = float).reshape(4,)
         r_Co2To_C         = np.asarray(record["r_Co2To_C"], dtype = float).reshape(3,)
         T_T_C             = np.asarray(record["T_T_C"], dtype = float).reshape(4, 4)
         cam_delta_s       = float(record["cam_delta_ms"]) / 1000.0
@@ -505,6 +508,7 @@ def write_trajectory_pack(
                     "cam_delta_s"            : cam_delta_s,
                     "soho_delta_s"           : soho_delta_s,
                    }
+        out_meta.update(metadata_extras)
         with out_meta_path.open("w", encoding = "utf-8") as handle:
             json.dump(out_meta, handle, indent = 4)
 
@@ -519,7 +523,7 @@ def write_trajectory_pack(
                                 }
                              )
 
-    lifted_path = output_dir / "trajectory_lifted.json"
+    lifted_path = output_dir / str(lifted_filename)
     with lifted_path.open("w", encoding = "utf-8") as handle:
         json.dump(
                     {

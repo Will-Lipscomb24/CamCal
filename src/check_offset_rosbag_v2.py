@@ -11,7 +11,11 @@ from offset_utils.camera_io import (
                                         collect_image_paths,
                                         parse_rosbag_frame_name,
                                     )
-from offset_utils.pose_ops import load_offset_estimates, vicon_row_to_T_T_C_v01
+from offset_utils.pose_ops import (
+                                        load_offset_estimates,
+                                        vicon_row_to_T_T_C_v01,
+                                        apply_target_origin_shift_to_T_T_C,
+                                    )
 from offset_utils.reprojection import load_target_points, project_points_T_T_C, draw_pose_overlay
 from offset_utils.metrics_and_pack import (
                                                 build_vicon_dataframe_from_rosbag,
@@ -30,7 +34,7 @@ ROSBAG_DIR                  = DATA_FOLDER / "rosbag2_2026_03_19-23_06_16"
 CALIBRATION_YAML_PATH       = PARENT / "data" / "offset" / "collection_001" / "calibration.yaml"
 OFFSET_JSON_PATH            = PARENT / "results" / "collection_001" / "cam_offset_v2" / "calc_offset_results.json"
 
-RESULT_PATH                 = PARENT / "results" / RUN_NAME / "check_offset_rosbag_v2"
+RESULT_PATH                 = PARENT / "results" / RUN_NAME / "check_offset_rosbag_v2_002"
 REPROJECTION_DIR            = RESULT_PATH / "reprojection"
 TRAJECTORY_EXPORT_DIR       = RESULT_PATH / "trajectory_export"
 TOPIC_YAMLS_DIR             = RESULT_PATH / "topic_yamls"
@@ -39,6 +43,17 @@ T_T_C_RESULTS_PATH          = RESULT_PATH / "T_T_C_results.json"
 
 SC_POSE_EXAMPLES_ROOT       = PARENT.parent / "sc-pose-utils" / "src" / "sc_pose" / "examples"
 KPS_FILE                    = SC_POSE_EXAMPLES_ROOT / "artifacts" / "soho_reframed_mesh_pose_pack" / "mesh_points_50000.json"
+KPS_UNITS                   = "mm"
+SHIFTED_KPS_FILE            = Path('/home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/mesh_keypoints/soho_centered/rendered_keypoints.json')
+SHIFTED_KPS_UNITS           = "m"
+SHIFTED_TRUTH_TARGET_OFFSET_M   = np.array(
+                                            [
+                                                0.2374940214582,
+                                                0.0523612819210,
+                                                -0.0269223600937,
+                                            ],
+                                            dtype = float,
+                                          )
 
 CAM_TOPIC                   = "/vicon/basler_cam/basler_cam"
 TARGET_TOPIC                = "/vicon/soho/soho"
@@ -53,6 +68,43 @@ FOCAL_LENGTH_MM             = 25.0
 SQUARE_PIXELS               = False
 SCALE_LOADED_K              = True
 ##################################### Inputs #####################################
+
+
+def _write_sanity_overlays(
+                            traj_dir                 : Path,
+                            frame_records            : list[dict[str, object]],
+                            K                        : np.ndarray,
+                            dist_coeffs              : np.ndarray,
+                            target_pts_with_origin   : np.ndarray,
+                          ) -> Path:
+    sanity_check_dir = traj_dir / "sanity_check"
+    ensure_clean_dir(sanity_check_dir)
+
+    for idx, record in enumerate(frame_records):
+        token                   = f"{idx:05d}"
+        sanity_image_path       = traj_dir / f"image_{token}.png"
+        T_T_C                   = np.asarray(record["T_T_C"], dtype = float)
+        uv_truth                = project_points_T_T_C(T_T_C, K, dist_coeffs, target_pts_with_origin)
+        sanity_overlay          = draw_pose_overlay(
+                                                    image = str(sanity_image_path),
+                                                    uv_points = uv_truth,
+                                                    point_color = (255, 0, 0),
+                                                    point_radius = 10,
+                                                    point_thickness = 2,
+                                                    origin_color = (0, 255, 0),
+                                                    origin_radius = 20,
+                                                    origin_thickness = 3,
+                                                    text_label = sanity_image_path.name,
+                                                 )
+        cv2.imwrite(str(sanity_check_dir / f"sanity_{token}.png"), sanity_overlay)
+
+    return sanity_check_dir
+
+
+def _should_write_shifted_pack(target_offset_m: np.ndarray) -> bool:
+    """ Return True only when the requested target-origin shift is non-zero """
+    target_offset_m = np.asarray(target_offset_m, dtype = float).reshape(3,)
+    return not np.allclose(target_offset_m, 0.0)
 
 
 def main():
@@ -70,11 +122,17 @@ def main():
                                                                 image_height_px = IMAGE_HEIGHT_PX,
                                                                 focal_length_mm = FOCAL_LENGTH_MM,
                                                                 square_pixels = SQUARE_PIXELS,
-                                                                scale_loaded_K = SCALE_LOADED_K,
-                                                                calibration_width_px = CALIBRATION_WIDTH_PX,
-                                                                calibration_height_px = CALIBRATION_HEIGHT_PX,
-                                                            )
-    target_pts_with_origin  = load_target_points(KPS_FILE, with_origin = True)
+                                                            scale_loaded_K = SCALE_LOADED_K,
+                                                            calibration_width_px = CALIBRATION_WIDTH_PX,
+                                                            calibration_height_px = CALIBRATION_HEIGHT_PX,
+                                                        )
+    target_pts_with_origin  = load_target_points(KPS_FILE, with_origin = True, units = KPS_UNITS)
+    write_shifted_pack      = _should_write_shifted_pack(SHIFTED_TRUTH_TARGET_OFFSET_M)
+    shifted_target_pts_with_origin = (
+                                        load_target_points(SHIFTED_KPS_FILE, with_origin = True, units = SHIFTED_KPS_UNITS)
+                                        if write_shifted_pack
+                                        else None
+                                     )
     image_paths             = collect_image_paths(IMAGE_DIR, img_suffix = ".png", rosbag_style = True)
     topic_yaml_info         = write_topic_yamls(
                                                 bag_dir = ROSBAG_DIR,
@@ -191,26 +249,54 @@ def main():
                                                 image_width_px = IMAGE_WIDTH_PX,
                                                 image_height_px = IMAGE_HEIGHT_PX,
                                             )
+    sanity_check_dir = _write_sanity_overlays(
+                                                traj_dir = traj_dir,
+                                                frame_records = frame_records,
+                                                K = K,
+                                                dist_coeffs = dist_coeffs,
+                                                target_pts_with_origin = target_pts_with_origin,
+                                            )
 
-    sanity_check_dir = traj_dir / "sanity_check"
-    ensure_clean_dir(sanity_check_dir)
-    for idx, record in enumerate(frame_records):
-        token                   = f"{idx:05d}"
-        sanity_image_path       = traj_dir / f"image_{token}.png"
-        T_T_C                   = np.asarray(record["T_T_C"], dtype = float)
-        uv_truth                = project_points_T_T_C(T_T_C, K, dist_coeffs, target_pts_with_origin)
-        sanity_overlay          = draw_pose_overlay(
-                                                    image = str(sanity_image_path),
-                                                    uv_points = uv_truth,
-                                                    point_color = (255, 0, 0),
-                                                    point_radius = 10,
-                                                    point_thickness = 2,
-                                                    origin_color = (0, 255, 0),
-                                                    origin_radius = 20,
-                                                    origin_thickness = 3,
-                                                    text_label = sanity_image_path.name,
-                                                 )
-        cv2.imwrite(str(sanity_check_dir / f"sanity_{token}.png"), sanity_overlay)
+    shifted_traj_dir         = None
+    shifted_lifted_path      = None
+    shifted_sanity_check_dir = None
+    if write_shifted_pack:
+        shifted_frame_records = []
+        for record in frame_records:
+            q_CAM_2_TARGET_shifted, r_Co2To_C_shifted, q_TARGET_2_CAM_shifted, T_T_C_shifted = apply_target_origin_shift_to_T_T_C(
+                                                                                                                                        T_T_C = record["T_T_C"],
+                                                                                                                                        target_offset_m = SHIFTED_TRUTH_TARGET_OFFSET_M,
+                                                                                                                                    )
+            shifted_record = dict(record)
+            shifted_record["q_CAM_2_TARGET"] = np.asarray(q_CAM_2_TARGET_shifted, dtype = float).tolist()
+            shifted_record["q_TARGET_2_CAM"] = np.asarray(q_TARGET_2_CAM_shifted, dtype = float).tolist()
+            shifted_record["r_Co2To_C"]      = np.asarray(r_Co2To_C_shifted, dtype = float).tolist()
+            shifted_record["T_T_C"]          = np.asarray(T_T_C_shifted, dtype = float).tolist()
+            shifted_frame_records.append(shifted_record)
+
+        shifted_traj_dir, shifted_lifted_path = write_trajectory_pack(
+                                                                        output_dir = TRAJECTORY_EXPORT_DIR,
+                                                                        frame_records = shifted_frame_records,
+                                                                        camera_settings = camera_settings,
+                                                                        K = K,
+                                                                        image_width_px = IMAGE_WIDTH_PX,
+                                                                        image_height_px = IMAGE_HEIGHT_PX,
+                                                                        pack_dir_name = "trajectory_pack_truth_shifted",
+                                                                        lifted_filename = "trajectory_lifted_truth_shifted.json",
+                                                                        metadata_extras = {
+                                                                                            "target_origin_shift_m"        : np.asarray(SHIFTED_TRUTH_TARGET_OFFSET_M, dtype = float).tolist(),
+                                                                                            "target_origin_shift_frame"    : "target",
+                                                                                            "origin_shift_applied"         : True,
+                                                                                            "source_pose_variant"          : "truth_translation_shifted",
+                                                                                          },
+                                                                     )
+        shifted_sanity_check_dir = _write_sanity_overlays(
+                                                            traj_dir = shifted_traj_dir,
+                                                            frame_records = shifted_frame_records,
+                                                            K = K,
+                                                            dist_coeffs = dist_coeffs,
+                                                            target_pts_with_origin = shifted_target_pts_with_origin,
+                                                          )
 
     summary = {
                 "num_images"             : int(len(image_paths)),
@@ -235,6 +321,14 @@ def main():
                 "trajectory_pack_dir"    : str(traj_dir),
                 "trajectory_sanity_dir"  : str(sanity_check_dir),
                 "trajectory_lifted_json" : str(lifted_path),
+                "shifted_pack_written"                 : bool(write_shifted_pack),
+                "trajectory_pack_truth_shifted_dir"    : str(shifted_traj_dir) if shifted_traj_dir is not None else "",
+                "trajectory_truth_shifted_sanity_dir"  : str(shifted_sanity_check_dir) if shifted_sanity_check_dir is not None else "",
+                "trajectory_lifted_truth_shifted_json" : str(shifted_lifted_path) if shifted_lifted_path is not None else "",
+                "target_origin_shift_m"                : np.asarray(SHIFTED_TRUTH_TARGET_OFFSET_M, dtype = float).tolist(),
+                "kps_units"                            : str(KPS_UNITS),
+                "shifted_kps_file"                     : str(SHIFTED_KPS_FILE) if write_shifted_pack else "",
+                "shifted_kps_units"                    : str(SHIFTED_KPS_UNITS) if write_shifted_pack else "",
               }
     with (RESULT_PATH / "summary.json").open("w", encoding = "utf-8") as handle:
         json.dump(summary, handle, indent = 4)
