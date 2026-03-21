@@ -15,7 +15,7 @@ from scipy.optimize import least_squares
 
 from sc_pose.mathtils.quaternion import q2rotm, rotm2q
 
-
+# set keys for indexing into Vicon CSV and offset JSON files, with defaults that match the current files but can be overridden if needed
 DEFAULT_VICON_KEYS  = {
                         "frame"         : "image_number",
                         "x_target"      : "soho_x",
@@ -100,7 +100,7 @@ def apply_target_origin_shift_to_T_T_C(
                                             T_T_C               : NDArray[np.floating],
                                             target_offset_m     : NDArray[np.floating],
                                       ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """ Shift the target origin by a translation expressed in the target frame """
+    """ Shift the target origin by a translation expressed in the target frame and get the corresponding corrected T_T_C and quaternions """
     T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
     target_offset_m         = np.asarray(target_offset_m, dtype = np.float64).reshape(3,)
     T_T_C_shifted           = np.array(T_T_C, dtype = np.float64, copy = True)
@@ -187,17 +187,18 @@ def build_vicon_transform_series(
                                     vicon_df     : pd.DataFrame,
                                     vicon_keys   : dict[str, str] | None = None,
                                 ) -> tuple[dict[int, NDArray[np.float64]], dict[int, NDArray[np.float64]], list[int]]:
-    """ Build the same raw Vicon transforms used by the current working cam_offset.py """
+    """ build the raw Vicon transformss from vicon df"""
     keys            = DEFAULT_VICON_KEYS if vicon_keys is None else vicon_keys
     T_CvV_by_image  = {}
     T_TvV_by_image  = {}
     image_numbers   = []
-
+    # assume data translation data is in mm
     for row in vicon_df.itertuples(index = False):
         image_number    = int(getattr(row, keys["frame"]))
         image_numbers.append(image_number)
-
-        soho_VTv        = np.array(
+        # build target Vicon info
+        # translation is from the vicon frame to the vicon-defined target frame, expressed in the vicon frame
+        target_VTv      = np.array(
                                     [
                                         float(getattr(row, keys["x_target"])),
                                         float(getattr(row, keys["y_target"])),
@@ -205,7 +206,8 @@ def build_vicon_transform_series(
                                     ],
                                     dtype = np.float64,
                                  ) / 1000.0
-        soho_quatVTv    = np.array(
+        # build the quaterion from the vicon frame to the vicon-defined target frame
+        target_quatVTv  = np.array(
                                     [
                                         float(getattr(row, keys["qw_target"])),
                                         float(getattr(row, keys["qx_target"])),
@@ -214,8 +216,12 @@ def build_vicon_transform_series(
                                     ],
                                     dtype = np.float64,
                                  )
-        Trfm_TvV        = q2rotm(soho_quatVTv)
+        # build the passive rotation from the vicon-defined target frame to the vicon
+        # recall that the rotation matrix from frame A to B = trannsformation matrix from B to A 
+        Trfm_TvV        = q2rotm(target_quatVTv)
 
+        # build camera Vicon info
+        # translation is from the vicon frame to the vicon-defined camera frame, expressed in the vicon frame
         cam_VCv         = np.array(
                                     [
                                         float(getattr(row, keys["x_cam"])),
@@ -224,6 +230,7 @@ def build_vicon_transform_series(
                                     ],
                                     dtype = np.float64,
                                  ) / 1000.0
+        # build the quaternion from the vicon frame to the vicon-defined camera frame
         cam_quatVCv     = np.array(
                                     [
                                         float(getattr(row, keys["qw_cam"])),
@@ -233,10 +240,12 @@ def build_vicon_transform_series(
                                     ],
                                     dtype = np.float64,
                                  )
+        # build the passive rotation from the vicon-defined camera frame to the vicon frame
         Trfm_CvV        = q2rotm(cam_quatVCv)
 
-        T_TvV_by_image[image_number] = build_transform(Trfm_TvV, soho_VTv)
-        T_CvV_by_image[image_number] = build_transform(Trfm_CvV, cam_VCv)
+        # build 4x4 homegeneous transforms for the target and camera Vicon measurements for this image
+        T_TvV_by_image[image_number]    = build_transform(Trfm_TvV, target_VTv)
+        T_CvV_by_image[image_number]    = build_transform(Trfm_CvV, cam_VCv)
 
     return T_CvV_by_image, T_TvV_by_image, image_numbers
 
@@ -247,10 +256,10 @@ def vicon_row_to_T_T_C_v01(
                                 T_TvT       : NDArray[np.floating],
                                 vicon_keys  : dict[str, str] | None = None,
                            ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """ Apply the current v01 offset-processing chain from check_offset.py """
+    """ apply the current offset-processing chain (similar to optimization) """
     keys            = DEFAULT_VICON_KEYS if vicon_keys is None else vicon_keys
-
-    soho_VTv        = np.array(
+    # process vicon data (see build_vicon_transform_series for more details on how these are built)
+    target_VTv      = np.array(
                                 [
                                     float(row[keys["x_target"]]),
                                     float(row[keys["y_target"]]),
@@ -258,7 +267,7 @@ def vicon_row_to_T_T_C_v01(
                                 ],
                                 dtype = np.float64,
                              ) / 1000.0
-    soho_quatVTv    = np.array(
+    target_quatVTv  = np.array(
                                 [
                                     float(row[keys["qw_target"]]),
                                     float(row[keys["qx_target"]]),
@@ -267,7 +276,7 @@ def vicon_row_to_T_T_C_v01(
                                 ],
                                 dtype = np.float64,
                              )
-    Trfm_TvV        = q2rotm(soho_quatVTv)
+    Trfm_TvV        = q2rotm(target_quatVTv)
 
     cam_VCv         = np.array(
                                 [
@@ -288,14 +297,20 @@ def vicon_row_to_T_T_C_v01(
                              )
     Trfm_CvV        = q2rotm(cam_quatVCv)
 
-    T_TvV           = build_transform(Trfm_TvV, soho_VTv)
+    T_TvV           = build_transform(Trfm_TvV, target_VTv)
     T_CvV           = build_transform(Trfm_CvV, cam_VCv)
-    T_T_C           = np.asarray(T_CvC, dtype = np.float64) @ (inv_T(T_CvV) @ T_TvV) @ inv_T(np.asarray(T_TvT, dtype = np.float64))
-
-    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T_C)
+    # apply same offset chain as seen in optimization to get predicted T_T_C for this measurement
+    T_T_C           = apply_camera_target_vicon_offset(
+                                                            T_CvC = T_CvC, 
+                                                            T_TvT = T_TvT, 
+                                                            T_CvV = T_CvV, 
+                                                            T_TvV = T_TvV
+                                                        )
+    # extract several quaternions and translations for convenience in analysis and visualization
+    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM   = T_T_C_to_pose(T_T_C)
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T_C
 
-
+# TODO: come back to
 def sync_measurements(
                         T_T_C_array              : NDArray[np.float64],
                         valid_image_numbers      : list[int],
@@ -303,6 +318,8 @@ def sync_measurements(
                         T_TvV_by_image           : dict[int, NDArray[np.float64]],
                         excluded_image_numbers   : list[int] | None = None,
                      ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], list[int], list[int]]:
+    """ synchronize the ChArUco-based T_T_C measurements with the Vicon-based T_CvV and T_TvV measurements 
+    by matching on image number, and return synchronized arrays of T_T_C, T_CvV, and T_TvV for the matched image numbers, along with lists of the kept and dropped image numbers after synchronization and exclusion """
     image_to_index  = {image_number: idx for idx, image_number in enumerate(valid_image_numbers)}
     common_numbers  = [
                         image_number
@@ -336,20 +353,31 @@ def rwhe_residuals(
     residual_blocks = []
 
     for T_T_C_obs, T_CvV, T_TvV in zip(T_T_C_array, T_CvV_array, T_TvV_array):
-        T_T_C_pred  = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
-        # T_C_C_pred  = apply_camera_target_vicon_offset(T_CvC, T_TvT, T_CvV, T_TvV)
+        # T_T_C_pred  = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
+        T_T_C_pred  = apply_camera_target_vicon_offset(
+                                                            T_CvC = T_CvC, 
+                                                            T_TvT = T_TvT, 
+                                                            T_CvV = T_CvV, 
+                                                            T_TvV = T_TvV
+                                                        )
         diff        = T_T_C_obs[:3, :] - T_T_C_pred[:3, :]
         residual_blocks.append(diff.reshape(-1))
 
     return np.concatenate(residual_blocks)
 
 def apply_camera_target_vicon_offset(
+                                        *, 
                                         T_CvC: NDArray[np.floating], 
                                         T_TvT: NDArray[np.floating],
                                         T_CvV: NDArray[np.floating], 
                                         T_TvV: NDArray[np.floating]
                                     ) -> NDArray[np.float64]:
     # in 4x4 homogeneous coordinates, apply the camera and target Vicon offsets to the vicon measurements to get the predicted T_T_C for a given measurement
+    # ensure inputs are numpy arrays of the correct dtype
+    T_CvC   = np.asarray(T_CvC, dtype = np.float64)
+    T_TvT   = np.asarray(T_TvT, dtype = np.float64)
+    T_CvV   = np.asarray(T_CvV, dtype = np.float64)
+    T_TvV   = np.asarray(T_TvV, dtype = np.float64)
     T_T_C   = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
     return T_T_C
 
