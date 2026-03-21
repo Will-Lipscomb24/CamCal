@@ -121,7 +121,7 @@ def apply_identity_target_origin_shift_to_T_T_C(
     T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
     r_To_2_T1_T             = np.asarray(r_To_2_T1_T, dtype = np.float64).reshape(3,)
     T_T1_T                  = build_transform(np.eye(3, dtype = np.float64), r_To_2_T1_T)
-    T_T1_C                 = T_T_C @ T_T1_T
+    T_T1_C                  = T_T_C @ T_T1_T
 
     q_CAM_2_TARGET1, r_Co2T1_C, q_TARGET1_2_CAM = T_T_C_to_pose(T_T1_C)
     return q_CAM_2_TARGET1, r_Co2T1_C, q_TARGET1_2_CAM, T_T1_C
