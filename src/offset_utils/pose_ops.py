@@ -96,19 +96,27 @@ def T_T_C_to_pose(T_T_C: NDArray[np.floating]) -> tuple[NDArray[np.float64], NDA
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM
 
 # TODO: come back to here
-def apply_target_origin_shift_to_T_T_C(
-                                            T_T_C               : NDArray[np.floating],
-                                            target_offset_m     : NDArray[np.floating],
-                                      ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """ Shift the target origin by a translation expressed in the target frame and get the corresponding corrected T_T_C and quaternions """
+def apply_identity_target_origin_shift_to_T_T_C(
+                                                    T_T_C       : NDArray[np.floating],
+                                                    r_T1_2_To_T   : NDArray[np.floating],
+                                                ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """ 
+    Shift the target origin by a translation expressed in the target frame and get the corresponding corrected T_T_C and quaternions
+    This shift assumes that the target offset is defined in the originally defined target frame: 
+    T_{Target Frame Centered on Original Origin} ^ {Target Frame Centered on Shifted Origin} = I_{3x3}  
+    """
     T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
-    target_offset_m         = np.asarray(target_offset_m, dtype = np.float64).reshape(3,)
-    T_T_C_shifted           = np.array(T_T_C, dtype = np.float64, copy = True)
-    Rotm_T_2_C              = T_T_C_shifted[:3, :3]
-    T_T_C_shifted[:3, 3]    = T_T_C_shifted[:3, 3] + Rotm_T_2_C @ target_offset_m
-
-    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T_C_shifted)
-    return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T_C_shifted
+    T_C_T                   = inv_T(T_T_C)
+    r_T1_2_To_T             = np.asarray(r_T1_2_To_T, dtype = np.float64).reshape(3,)
+    Trfm_T_2_C              = T_T_C[:3, :3]
+    # r_Co2To_C               = T_T_C[:3, 3].reshape(3,)
+    r_To2Co_T               = T_C_T[:3, 3].reshape(3,) # translation from original target frame to camera expressed in original target frame
+    r_T1_2_Co_T             = r_To2Co_T + r_T1_2_To_T
+    r_Co2T1_C               =  Trfm_T_2_C @ r_T1_2_Co_T
+    T_T1_C                  = build_transform(Trfm_T_2_C, r_Co2T1_C)
+    
+    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T1_C)
+    return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T1_C
 
 
 def opencv_rvec_tvec_to_T_T_C(
@@ -310,16 +318,21 @@ def vicon_row_to_T_T_C_v01(
     q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM   = T_T_C_to_pose(T_T_C)
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T_C
 
-# TODO: come back to
-def sync_measurements(
+
+# TODO: add a version of sync_charuco_vicon_measurements that works with ros timestamps for when calibration is done on images taken on robot
+
+def sync_charuco_vicon_measurements(
                         T_T_C_array              : NDArray[np.float64],
                         valid_image_numbers      : list[int],
                         T_CvV_by_image           : dict[int, NDArray[np.float64]],
                         T_TvV_by_image           : dict[int, NDArray[np.float64]],
                         excluded_image_numbers   : list[int] | None = None,
                      ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], list[int], list[int]]:
-    """ synchronize the ChArUco-based T_T_C measurements with the Vicon-based T_CvV and T_TvV measurements 
-    by matching on image number, and return synchronized arrays of T_T_C, T_CvV, and T_TvV for the matched image numbers, along with lists of the kept and dropped image numbers after synchronization and exclusion """
+    """ 
+    synchronize the ChArUco-based T_T_C measurements with the Vicon-based T_CvV and T_TvV measurements 
+    by matching on image number, and return synchronized arrays of T_T_C, T_CvV, and T_TvV for the matched image numbers, along with lists of the kept and dropped image numbers after synchronization and exclusion 
+    """
+    # build a mapping from image number to index in the T_T_C_array for quick lookup, since the T_T_C measurements are in an array and we need to find the corresponding T_CvV and T_TvV for each image number
     image_to_index  = {image_number: idx for idx, image_number in enumerate(valid_image_numbers)}
     common_numbers  = [
                         image_number
@@ -329,15 +342,17 @@ def sync_measurements(
     if len(common_numbers) == 0:
         raise RuntimeError("No overlapping image numbers between ChArUco detections and Vicon data")
 
+    # if there are any excluded image numbers, filter them out from the common numbers and keep track of which ones were kept and which ones were dropped for reporting and analysis purposes, since excluding certain measurements may be necessary due to issues with the ChArUco detections or Vicon data for those images, but we want to be transparent about which measurements were used in the optimization
     excluded_set    = set([] if excluded_image_numbers is None else excluded_image_numbers)
     kept_numbers    = [image_number for image_number in common_numbers if image_number not in excluded_set]
     dropped_numbers = [image_number for image_number in common_numbers if image_number in excluded_set]
     if len(kept_numbers) == 0:
         raise RuntimeError("All matched image numbers were excluded; nothing remains to solve")
-
+    # build synchronized arrays of T_T_C, T_CvV, and T_TvV for the kept image numbers, using the image_to_index mapping to find the corresponding T_T_C measurement for each image number, and looking up the corresponding T_CvV and T_TvV from the dictionaries by image number
     T_T_C_sync      = np.stack([T_T_C_array[image_to_index[image_number]] for image_number in kept_numbers])
     T_CvV_sync      = np.stack([T_CvV_by_image[image_number] for image_number in kept_numbers])
     T_TvV_sync      = np.stack([T_TvV_by_image[image_number] for image_number in kept_numbers])
+    # for reporting and analysis, also return the lists of kept and dropped image numbers after synchronization and exclusion, since this information can be useful for understanding the results of the optimization and for diagnosing any issues with the measurements or the optimization process
     return T_T_C_sync, T_CvV_sync, T_TvV_sync, kept_numbers, dropped_numbers
 
 
