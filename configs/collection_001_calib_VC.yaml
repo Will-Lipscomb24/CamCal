@@ -31,7 +31,7 @@ fisheye:
   fix_k1k2k3k4: false
 
 flags:
-  use_intrinsic_guess: false
+  use_intrinsic_guess: true
   fix_principal_point: false
   fix_aspect_ratio: false
   zero_tangent_dist: false
@@ -40,7 +40,7 @@ flags:
   tilted_model: false
   fix_k1: false
   fix_k2: false
-  fix_k3: true
+  fix_k3: false
   fix_k4: true
   fix_k5: true
   fix_k6: true

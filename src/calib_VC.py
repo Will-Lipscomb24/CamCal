@@ -8,7 +8,7 @@ Modes:
   - "scipy": custom LM (SciPy) calibration with per-parameter constraints
 
 Usage:
-  python3 cv2_cal_cht.py --config configs/cal_config.yaml
+  python3 calib_VC.py --config configs/cal_config.yaml
 """
 
 import argparse
@@ -1411,8 +1411,13 @@ if __name__ == "__main__":
 
 
 # cd /home/saa4743/agnc_repos/CamCal
-# /home/saa4743/miniforge3/envs/neurals/bin/python src/cv2_cal_cht.py \
-#   --config /home/saa4743/agnc_repos/CamCal/configs/collection_001_cal_cht.yaml \
+# /home/saa4743/miniforge3/envs/neurals/bin/python src/calib_VC.py \
+#   --config /home/saa4743/agnc_repos/CamCal/configs/collection_001_calib_VC.yaml \
 #   --fix-aspect-ratio \
-#   --init-focal-px 7600 \
+#   --init-focal-px 7000 \
 #   --aspect-ratio 1.0
+
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/miniforge3/envs/neurals/bin/python src/calib_VC.py \
+#   --config /home/saa4743/agnc_repos/CamCal/configs/collection_001_calib_VC.yaml \
+#   --init-focal-px 7000
