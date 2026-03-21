@@ -12,6 +12,8 @@ import cv2.aruco as aruco
 import numpy as np
 from numpy.typing import NDArray
 
+# local import 
+from src.offset_utils.pose_ops import build_transform
 
 def ensure_clean_dir(path: Path) -> Path:
     """ delete and recreate a directory """
@@ -181,12 +183,6 @@ def build_charuco_board(
     return board, aruco_dict
 
 
-def _build_transform(passive_rotation_block: NDArray[np.floating], translation: NDArray[np.floating]) -> NDArray[np.float64]:
-    # build a 4x4 homogeneous transform from a passive rotation block and translation vector
-    transform           = np.eye(4, dtype = np.float64)
-    transform[:3, :3]   = np.asarray(passive_rotation_block, dtype = np.float64)
-    transform[:3, 3]    = np.asarray(translation, dtype = np.float64).reshape(3,)
-    return transform
 
 ############################# ChArUco detection and pose estimation functions #############################
 #### these  functions handle differences in OpenCV versions for ArUco detection and pose estimation, 
@@ -347,7 +343,7 @@ def estimate_T_T_C_from_charuco(
 
     Rotm_C_T, _ = cv2.Rodrigues(rvec) # Rotm_C_T (3x3 activte rotaiton) = Trfm_T_C (3x3 passive rotation) transpose
     # since OpenCV returns the active rotation from C to T
-    T_T_C       = _build_transform(Rotm_C_T, tvec.reshape(3,))
+    T_T_C       = build_transform(Rotm_C_T, tvec.reshape(3,))
 
     detection_info = {
                         "charuco_corners" : np.asarray(charuco_corners, dtype = np.float64).reshape(-1, 2),

@@ -1,3 +1,7 @@
+# src/offset_utils/pose_ops.py
+""" 
+A set of utilities for working with the various pose representations and transformations involved in the offset estimation process, including loading Vicon data and offset estimates from files, converting between representations, and synchronizing
+"""
 from __future__ import annotations
 
 import json
@@ -12,7 +16,7 @@ from scipy.optimize import least_squares
 from sc_pose.mathtils.quaternion import q2rotm, rotm2q
 
 
-DEFAULT_VICON_KEYS = {
+DEFAULT_VICON_KEYS  = {
                         "frame"         : "image_number",
                         "x_target"      : "soho_x",
                         "y_target"      : "soho_y",
@@ -36,14 +40,16 @@ DEFAULT_OFFSET_KEYS = {
                      }
 
 
-def build_transform(rotation_block: NDArray[np.floating], translation: NDArray[np.floating]) -> NDArray[np.float64]:
-    transform            = np.eye(4, dtype = np.float64)
-    transform[:3, :3]    = np.asarray(rotation_block, dtype = np.float64)
-    transform[:3, 3]     = np.asarray(translation, dtype = np.float64).reshape(3,)
+def build_transform(passive_rotation_block: NDArray[np.floating], translation: NDArray[np.floating]) -> NDArray[np.float64]:
+    # build a 4x4 homogeneous transform from a passive rotation block and translation vector
+    transform           = np.eye(4, dtype = np.float64)
+    transform[:3, :3]   = np.asarray(passive_rotation_block, dtype = np.float64)
+    transform[:3, 3]    = np.asarray(translation, dtype = np.float64).reshape(3,)
     return transform
 
 
 def inv_T(transform: NDArray[np.floating]) -> NDArray[np.float64]:
+    # compute the inverse of a homogeneous transform by inverting the rotation block and translation vector according to the formula for inverting a homogeneous transform
     transform            = np.asarray(transform, dtype = np.float64)
     rotation_block       = transform[:3, :3]
     translation          = transform[:3, 3]
@@ -53,28 +59,43 @@ def inv_T(transform: NDArray[np.floating]) -> NDArray[np.float64]:
 
 
 def params_to_T(params: NDArray[np.floating]) -> NDArray[np.float64]:
+    # convert a 6D parameterization of a homogeneous transform (3 for rotation as a Rodrigues vector, 3 for translation) into a 4x4 homogeneous transform matrix
     params              = np.asarray(params, dtype = np.float64).reshape(6,)
     rotation_block, _   = cv2.Rodrigues(params[:3])
     return build_transform(rotation_block, params[3:])
 
 
 def T_to_params(transform: NDArray[np.floating]) -> NDArray[np.float64]:
+    # convert a 4x4 homogeneous transform matrix into a 6D parameterization (3 for rotation as a Rodrigues vector, 3 for translation)
     transform           = np.asarray(transform, dtype = np.float64)
     rvec, _             = cv2.Rodrigues(transform[:3, :3])
     return np.hstack([rvec.reshape(3,), transform[:3, 3]])
+
+# original, cleaned below
+# def T_T_C_to_pose(T_T_C: NDArray[np.floating]) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+#     """ Convert ^C T_T into canonical translation and both quaternion directions """
+#     T_T_C               = np.asarray(T_T_C, dtype = np.float64)
+#     Rotm_T_2_C          = T_T_C[:3, :3]
+#     Rotm_C_2_T          = Rotm_T_2_C.T
+#     r_Co2To_C           = T_T_C[:3, 3].reshape(3,)
+#     q_CAM_2_TARGET      = rotm2q(Rotm_C_2_T)
+#     q_TARGET_2_CAM      = rotm2q(Rotm_T_2_C)
+#     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM
 
 
 def T_T_C_to_pose(T_T_C: NDArray[np.floating]) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """ Convert ^C T_T into canonical translation and both quaternion directions """
     T_T_C               = np.asarray(T_T_C, dtype = np.float64)
-    Rotm_T_2_C          = T_T_C[:3, :3]
-    Rotm_C_2_T          = Rotm_T_2_C.T
+    Trfm_T_2_C          = T_T_C[:3, :3] # extract passive rotation from T_T_C
+    Rotm_T_2_C          = Trfm_T_2_C.T # compute active rotation from T to C by transposing the passive rotation
+    Rotm_C_2_T          = Trfm_T_2_C # active rotation from C to T (same as passive rotation from T to C)
+    r_Co2To_C           = T_T_C[:3, 3].reshape(3,)
     r_Co2To_C           = T_T_C[:3, 3].reshape(3,)
     q_CAM_2_TARGET      = rotm2q(Rotm_C_2_T)
     q_TARGET_2_CAM      = rotm2q(Rotm_T_2_C)
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM
 
-
+# TODO: come back to here
 def apply_target_origin_shift_to_T_T_C(
                                             T_T_C               : NDArray[np.floating],
                                             target_offset_m     : NDArray[np.floating],
@@ -97,9 +118,11 @@ def opencv_rvec_tvec_to_T_T_C(
     """ Convert OpenCV board pose outputs into canonical T_T_C and quaternion outputs """
     rvec                = np.asarray(rvec, dtype = np.float64).reshape(3,)
     tvec                = np.asarray(tvec, dtype = np.float64).reshape(3,)
-    Rotm_T_2_C, _       = cv2.Rodrigues(rvec)
-    T_T_C               = build_transform(Rotm_T_2_C, tvec)
-    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T_C)
+    r_Co2To_C           = tvec
+    Rotm_C_2_T, _       = cv2.Rodrigues(rvec)
+    Trfm_T_2_C          = Rotm_C_2_T
+    T_T_C               = build_transform(Trfm_T_2_C, r_Co2To_C)
+    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM   = T_T_C_to_pose(T_T_C)
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T_C
 
 
@@ -107,16 +130,17 @@ def load_offset_estimates(
                             offset_json_path : Path,
                             offset_keys      : dict[str, str] | None = None,
                           ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    offset_json_path = Path(offset_json_path)
+    """ Local calculated (via optimization) offsets """
+    offset_json_path    = Path(offset_json_path)
     if not offset_json_path.exists():
         raise FileNotFoundError(f"Offset JSON not found: {offset_json_path}")
 
-    keys = DEFAULT_OFFSET_KEYS if offset_keys is None else offset_keys
+    keys            = DEFAULT_OFFSET_KEYS if offset_keys is None else offset_keys
     with offset_json_path.open("r", encoding = "utf-8") as handle:
         offset_json = json.load(handle)
 
-    T_CvC = np.asarray(offset_json[keys["Trf_4x4_CamViconDef_Cam"]], dtype = np.float64)
-    T_TvT = np.asarray(offset_json[keys["Trf_4x4_TargetViconDef_Target"]], dtype = np.float64)
+    T_CvC   = np.asarray(offset_json[keys["Trf_4x4_CamViconDef_Cam"]], dtype = np.float64)
+    T_TvT   = np.asarray(offset_json[keys["Trf_4x4_TargetViconDef_Target"]], dtype = np.float64)
     return T_CvC, T_TvT
 
 
@@ -306,17 +330,28 @@ def rwhe_residuals(
                     T_CvV_array     : NDArray[np.float64],
                     T_TvV_array     : NDArray[np.float64],
                   ) -> NDArray[np.float64]:
+    # compute the residuals for the RWHE problem given the current estimates of T_CvC and T_TvT and the synchronized measurements, where the residuals are the differences between the observed T_T_C and the predicted T_T_C for each measurement, flattened into a 1D array for least_squares
     T_CvC           = params_to_T(params[:6])
     T_TvT           = params_to_T(params[6:])
     residual_blocks = []
 
     for T_T_C_obs, T_CvV, T_TvV in zip(T_T_C_array, T_CvV_array, T_TvV_array):
-        T_T_C_pred   = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
-        diff         = T_T_C_obs[:3, :] - T_T_C_pred[:3, :]
+        T_T_C_pred  = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
+        # T_C_C_pred  = apply_camera_target_vicon_offset(T_CvC, T_TvT, T_CvV, T_TvV)
+        diff        = T_T_C_obs[:3, :] - T_T_C_pred[:3, :]
         residual_blocks.append(diff.reshape(-1))
 
     return np.concatenate(residual_blocks)
 
+def apply_camera_target_vicon_offset(
+                                        T_CvC: NDArray[np.floating], 
+                                        T_TvT: NDArray[np.floating],
+                                        T_CvV: NDArray[np.floating], 
+                                        T_TvV: NDArray[np.floating]
+                                    ) -> NDArray[np.float64]:
+    # in 4x4 homogeneous coordinates, apply the camera and target Vicon offsets to the vicon measurements to get the predicted T_T_C for a given measurement
+    T_T_C   = T_CvC @ (inv_T(T_CvV) @ T_TvV) @ inv_T(T_TvT)
+    return T_T_C
 
 def solve_rwhe(
                     T0_CvC         : NDArray[np.float64],
@@ -325,21 +360,27 @@ def solve_rwhe(
                     T_CvV_array    : NDArray[np.float64],
                     T_TvV_array    : NDArray[np.float64],
                ) -> tuple[NDArray[np.float64], NDArray[np.float64], object, float]:
+    """ 
+    Solve the RWHE problem for the given initial estimates and synchronized measurements, returning the optimized T_CvC and T_TvT along with 
+    the optimization result object and initial cost 
+    """
+    # T0_flat is the initial guess for the optimization, which concatenates the 6 parameters of T0_CvC and the 6 parameters of T0_TvT into a single 12D parameter vector
     T0_flat         = np.concatenate([T_to_params(T0_CvC), T_to_params(T0_TvT)])
+    # the initial cost is computed as half the sum of squares of the initial residuals, which are the differences between the observed T_T_C and the predicted T_T_C for each measurement using the initial estimates of T_CvC and T_TvT
     initial_res     = rwhe_residuals(T0_flat, T_T_C_array, T_CvV_array, T_TvV_array)
     initial_cost    = 0.5 * float(np.sum(initial_res ** 2))
 
     print(f"Solving RWHE with {len(T_T_C_array)} measurements...")
     print(f"Initial cost: {initial_cost:.6f}")
 
-    result = least_squares(
-                            rwhe_residuals,
-                            T0_flat,
-                            args = (T_T_C_array, T_CvV_array, T_TvV_array),
-                            method = "lm",
-                            verbose = 1,
-                          )
-
+    result          = least_squares(
+                                        rwhe_residuals,
+                                        T0_flat,
+                                        args = (T_T_C_array, T_CvV_array, T_TvV_array),
+                                        method = "lm",
+                                        verbose = 1,
+                                )
+    # after optimization, we convert the optimized parameter vector back into T_CvC and T_TvT using the params_to_T function, which constructs the 4x4 homogeneous transform matrices from the optimized rotation and translation parameters
     T_CvC           = params_to_T(result.x[:6])
     T_TvT           = params_to_T(result.x[6:])
 
