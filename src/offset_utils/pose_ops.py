@@ -95,28 +95,36 @@ def T_T_C_to_pose(T_T_C: NDArray[np.floating]) -> tuple[NDArray[np.float64], NDA
     q_TARGET_2_CAM      = rotm2q(Rotm_T_2_C)
     return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM
 
-# TODO: come back to here
 def apply_identity_target_origin_shift_to_T_T_C(
                                                     T_T_C       : NDArray[np.floating],
-                                                    r_T1_2_To_T   : NDArray[np.floating],
+                                                    r_To_2_T1_T   : NDArray[np.floating],
                                                 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """ 
     Shift the target origin by a translation expressed in the target frame and get the corresponding corrected T_T_C and quaternions
-    This shift assumes that the target offset is defined in the originally defined target frame: 
-    T_{Target Frame Centered on Original Origin} ^ {Target Frame Centered on Shifted Origin} = I_{3x3}  
+    This shift assumes that the target offset is defined in the originally defined target frame and 
+    T_{Target Frame Centered on Original Origin} ^ {Target Frame Centered on Shifted Origin} = I_{3x3}
+    r_To_2_T1_T is the translation from the original target frame to the shifted target frame, expressed in the original target frame
+
+    Example: apply_identity_target_origin_shift_to_T_T_C(T_T_C, np.array([237.4940214582, 52.3612819210, -26.9223600937)]*1e-3) 
     """
-    T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
-    T_C_T                   = inv_T(T_T_C)
-    r_T1_2_To_T             = np.asarray(r_T1_2_To_T, dtype = np.float64).reshape(3,)
-    Trfm_T_2_C              = T_T_C[:3, :3]
-    # r_Co2To_C               = T_T_C[:3, 3].reshape(3,)
-    r_To2Co_T               = T_C_T[:3, 3].reshape(3,) # translation from original target frame to camera expressed in original target frame
-    r_T1_2_Co_T             = r_To2Co_T + r_T1_2_To_T
-    r_Co2T1_C               =  Trfm_T_2_C @ r_T1_2_Co_T
-    T_T1_C                  = build_transform(Trfm_T_2_C, r_Co2T1_C)
+    # T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
+    # T_C_T                   = inv_T(T_T_C)
+    # r_To_2_T1_T             = np.asarray(r_To_2_T1_T, dtype = np.float64).reshape(3,)
+    # Trfm_T_2_C              = T_T_C[:3, :3]
+    # r_To2Co_T               = T_C_T[:3, 3].reshape(3,) # translation from original target frame to camera expressed in original target frame
+    # r_T1_2_Co_T             = r_To2Co_T - r_To_2_T1_T
+    # r_Co2T1_C               = Trfm_T_2_C @ (-r_T1_2_Co_T)
+    # T_T1_C                  = build_transform(Trfm_T_2_C, r_Co2T1_C)
     
-    q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM = T_T_C_to_pose(T_T1_C)
-    return q_CAM_2_TARGET, r_Co2To_C, q_TARGET_2_CAM, T_T1_C
+    # another way:
+    #T_To_C @ T_T1_To
+    T_T_C                   = np.asarray(T_T_C, dtype = np.float64)
+    r_To_2_T1_T             = np.asarray(r_To_2_T1_T, dtype = np.float64).reshape(3,)
+    T_T1_T                  = build_transform(np.eye(3, dtype = np.float64), r_To_2_T1_T)
+    T_T1_C                 = T_T_C @ T_T1_T
+
+    q_CAM_2_TARGET1, r_Co2T1_C, q_TARGET1_2_CAM = T_T_C_to_pose(T_T1_C)
+    return q_CAM_2_TARGET1, r_Co2T1_C, q_TARGET1_2_CAM, T_T1_C
 
 
 def opencv_rvec_tvec_to_T_T_C(
