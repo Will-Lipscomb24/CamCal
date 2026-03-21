@@ -1,3 +1,5 @@
+# src/offset_utils/camera_io.py
+""" A set of utilities for loading camera calibration, collecting and parsing calibration images, and estimating ChArUco board poses from images """
 from __future__ import annotations
 
 import re
@@ -109,6 +111,8 @@ def load_camera_calibration(
                                 calibration_height_px      : int | None = None,
                             ) -> tuple[NDArray[np.float64], NDArray[np.float64], dict[str, float]]:
     """ Load camera calibration through sc_pose and optionally scale K to the requested image size """
+    # local import of sc-pose-utils repo, we expect sc_pose to be installed in the same environment that will run this script
+    # will error if sc_pose is not installed, which is a hard dependency for loading camera calibration through the convenient sc_pose YAML format
     from sc_pose.sensors.camera import PinholeCamera
 
     calibration_yaml_path   = Path(calibration_yaml_path)
