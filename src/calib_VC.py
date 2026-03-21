@@ -1410,6 +1410,7 @@ if __name__ == "__main__":
     main()
 
 
+# Note set output dir in the yaml
 # cd /home/saa4743/agnc_repos/CamCal
 # /home/saa4743/miniforge3/envs/neurals/bin/python src/calib_VC.py \
 #   --config /home/saa4743/agnc_repos/CamCal/configs/collection_001_calib_VC.yaml \

@@ -157,9 +157,10 @@ DATA_FOLDER             = DATA_ROOT / EXP_NAME
 IMAGE_DIR               = DATA_FOLDER / "images"
 IMG_SUFFIX              = ".png"
 VICON_CSV_PATH          = DATA_FOLDER / "vicon_data.csv"
-CALIBRATION_YAML_PATH   = DATA_FOLDER / "calibration.yaml"
+# CALIBRATION_YAML_PATH   = DATA_FOLDER / "calibration.yaml"
+CALIBRATION_YAML_PATH   = Path("/home/saa4743/agnc_repos/CamCal/results/collection_001/calib/calibration.yaml")
 
-RESULT_PATH             = PARENT / "results" / EXP_NAME
+RESULT_PATH             = PARENT / "results" / f"{EXP_NAME}_test_001"
 OPENCV_POSE_EST_PATH    = RESULT_PATH / "calc_camera_poses.csv"
 OUTPUT_JSON_PATH        = RESULT_PATH / "calc_offset_results.json"
 REPROJECTION_DIR        = RESULT_PATH / "reprojection"
