@@ -88,7 +88,7 @@ def _to_yaml_lines(value, indent: int = 0) -> list[str]:
 def compute_pose_error_metrics(
                                     T_T_C_est      : NDArray[np.floating],
                                     T_T_C_truth    : NDArray[np.floating],
-                                ) -> dict[str, float]:
+                                ) -> dict[str, float | NDArray[np.float64]]:
     """
     Compute pose error metrics for either:
       - a single pair of poses with shape (4, 4), or
@@ -138,7 +138,6 @@ def compute_pose_error_metrics(
     T_truth         = _broadcast_batch(T_truth, n, "T_T_C_truth")
     T_T_C_est       = np.asarray(T_T_C_est, dtype = np.float64)
     T_T_C_truth     = np.asarray(T_T_C_truth, dtype = np.float64)
-    squeeze_output  = (n == 1)
 
     r_Co2To_C_est   = T_est[:, :3, 3]
     r_Co2To_C_truth = T_truth[:, :3, 3]
@@ -149,6 +148,7 @@ def compute_pose_error_metrics(
     # for quaternions
     qs          = []
     qhats       = []
+    qerrs       = []
     eulers      = []
     for i in range(n):
         T_T_C_est_i             = T_est[i]
@@ -158,37 +158,33 @@ def compute_pose_error_metrics(
         qs.append(q_CAM_2_TARGET_est)
         qhats.append(q_CAM_2_TARGET_truth)
         q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
+        qerrs.append(q_err_xyzw)
         euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
         eulers.append(euler_err_xyz_deg)
     sp_ER       = np.asarray(batch_E_R(qs, qhats), dtype = np.float64)
     sp_ER_deg   = np.degrees(sp_ER)
     sp_EC       = sp_ETN + sp_ER
+    qs          = np.asarray(qs, dtype = np.float64)
+    qhats       = np.asarray(qhats, dtype = np.float64)
+    eulers      = np.asarray(eulers, dtype = np.float64)
 
+    err_dict    = {
+                    "translation_error_x_m": translation_err[:, 0],
+                    "translation_error_y_m": translation_err[:, 1],
+                    "translation_error_z_m": translation_err[:, 2],
+                    "E_T": sp_ET,
+                    "E_TN": sp_ETN,
+                    "E_R_deg": sp_ER_deg,
+                    "E_C": sp_EC,
+                    "rotation_error_x_deg": eulers[:, 0],
+                    "rotation_error_y_deg": eulers[:, 1],
+                    "rotation_error_z_deg": eulers[:, 2],
+            }
 
-    # translation_err = r_Co2To_C_truth - r_Co2To_C_est
-    # sp_ET           = E_T(r_Co2To_C_truth, r_Co2To_C_est)
-    # sp_ETN          = E_TN(r_Co2To_C_truth, r_Co2To_C_est)
-    # sp_ER           = E_R(q_CAM_2_TARGET_truth, q_CAM_2_TARGET_est)
-    # sp_ER_deg       = np.degrees(sp_ER)
-    # sp_EC           = sp_ETN + sp_ER
-    # q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
-    # euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
-
-    err_dict                = {
-                                "mean_translation_error_x_m"    : float(translation_err[:, 0].mean()),
-                                "mean_translation_error_y_m"    : float(translation_err[:, 1].mean()),
-                                "mean_translation_error_z_m"    : float(translation_err[:, 2].mean()),
-                                "E_T"                           : sp_ET,
-                                "E_TN"                          : sp_ETN,
-                                "E_R_deg"                       : sp_ER_deg,
-                                'E_C'                           : sp_EC,
-                                "mean_rotation_error_x_deg"     : float(euler_err_xyz_deg[:, 0].mean()),
-                                "mean_rotation_error_y_deg"     : float(euler_err_xyz_deg[:, 1].mean()),
-                                "mean_rotation_error_z_deg"     : float(euler_err_xyz_deg[:, 2].mean()),
-                            }
-
-
+    if n == 1:
+        return {key: float(value[0]) for key, value in err_dict.items()}
     return err_dict
+
 
 
 def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float | int]:
