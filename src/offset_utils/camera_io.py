@@ -39,7 +39,8 @@ def parse_img_saver_ros_timestamp_v01(path_or_name: str | Path) -> tuple[int, in
     match   = re.fullmatch(r"frame_(\d+)_(\d+)_(\d+)", Path(path_or_name).stem)
     if match is None:
         raise ValueError(f"Unsupported rosbag image name format: {Path(path_or_name).name}")
-
+    # current image saver node format is:
+    # {image_prefix}_{saved_count}_{sec}_{nanosec}.png
     frame_idx       = int(match.group(1))
     stamp_sec       = int(match.group(2))
     stamp_nanosec   = int(match.group(3))

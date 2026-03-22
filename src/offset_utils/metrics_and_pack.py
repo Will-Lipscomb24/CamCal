@@ -13,7 +13,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
-from offset_utils.camera_io import parse_rosbag_frame_name
+from offset_utils.camera_io import parse_img_saver_ros_timestamp_v01
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -508,12 +508,12 @@ def build_vicon_dataframe_from_rosbag(
     vicon_rows  = []
     for image_path in image_paths:
         # image filenames already encode the original rosbag timestamp
-        frame_idx, image_stamp_ns = parse_rosbag_frame_name(image_path)
-        cam_row, cam_delta_ns     = find_nearest_pose_row(image_stamp_ns, cam_rows)
-        soho_row, soho_delta_ns   = find_nearest_pose_row(image_stamp_ns, soho_rows)
-        image_timestamp_s         = float(image_stamp_ns) / 1e9
-        cam_timestamp_s           = float(cam_row.stamp_ns) / 1e9
-        soho_timestamp_s          = float(soho_row.stamp_ns) / 1e9
+        frame_idx, image_stamp_ns   = parse_img_saver_ros_timestamp_v01(image_path)
+        cam_row, cam_delta_ns       = find_nearest_pose_row(image_stamp_ns, cam_rows)
+        soho_row, soho_delta_ns     = find_nearest_pose_row(image_stamp_ns, soho_rows)
+        image_timestamp_s           = float(image_stamp_ns) / 1e9
+        cam_timestamp_s             = float(cam_row.stamp_ns) / 1e9
+        soho_timestamp_s            = float(soho_row.stamp_ns) / 1e9
 
         # store the matched truth in the same column layout the rest of the offset code already expects
         vicon_rows.append(
