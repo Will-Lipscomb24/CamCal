@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 # required local import from sc-pose-utils repo
 from sc_pose.sensors.camera_projections import PoseProjector, draw_uv_points_on_image
 
+from src.offset_utils.camera_io import get_charuco_board_corners
 
 def load_target_points(
                             kps_file     : Path,
@@ -220,18 +221,6 @@ def _draw_error_line(
             )
 
 
-def _get_charuco_board_corners(board) -> NDArray[np.float64]:
-    """ 
-    get the 3D coordinates of the ChArUco board corners in the board frame, using either the 
-    chessboardCorners attribute or the getChessboardCorners method, depending on the OpenCV version 
-    """
-    if hasattr(board, "chessboardCorners"):
-        return np.asarray(board.chessboardCorners, dtype = np.float64)
-    if hasattr(board, "getChessboardCorners"):
-        return np.asarray(board.getChessboardCorners(), dtype = np.float64)
-    raise RuntimeError("CharucoBoard has neither chessboardCorners nor getChessboardCorners")
-
-
 def write_charuco_reprojection_overlays(
                                             output_dir           : Path,
                                             reprojection_rows    : list[dict[str, object]],
@@ -252,7 +241,7 @@ def write_charuco_reprojection_overlays(
     output_dir.mkdir(parents = True, exist_ok = True)
     
     # precompute the board corner coordinates and a mapping from marker id to marker corner coordinates for efficient lookup during overlay generation
-    board_corners           = np.asarray(_get_charuco_board_corners(board), dtype = np.float64).reshape(-1, 3)
+    board_corners           = np.asarray(get_charuco_board_corners(board), dtype = np.float64).reshape(-1, 3)
     marker_object_points    = [np.asarray(points, dtype = np.float64).reshape(-1, 3) for points in board.getObjPoints()]
     marker_ids              = np.asarray(board.getIds(), dtype = np.int32).reshape(-1)
     marker_obj_map          = {

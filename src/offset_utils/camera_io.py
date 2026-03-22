@@ -250,7 +250,11 @@ def _detect_charuco_corners(
     raise RuntimeError("cv2.aruco has neither interpolateCornersCharuco nor CharucoDetector")
 
 
-def _get_charuco_board_corners(board: aruco.CharucoBoard) -> NDArray[np.float64]:
+def get_charuco_board_corners(board) -> NDArray[np.float64]:
+    """ 
+    get the 3D coordinates of the ChArUco board corners in the board frame, using either the 
+    chessboardCorners attribute or the getChessboardCorners method, depending on the OpenCV version 
+    """
     if hasattr(board, "chessboardCorners"):
         return np.asarray(board.chessboardCorners, dtype = np.float64)
     if hasattr(board, "getChessboardCorners"):
