@@ -45,12 +45,13 @@ HERE                    = Path(__file__).resolve()
 PARENT_ROOT             = HERE.parent
 CAMCAL_ROOT             = PARENT_ROOT.parent
 
-DATA_DIR                = CAMCAL_ROOT / "data" / "offset" / "collection_001"
+test_num                = "001" # change this as needed 
+DATA_DIR                = CAMCAL_ROOT / "data" / "offset" / "collection_001" # change this as needed
 IMAGE_DIR               = DATA_DIR / "images"
 VAL_IMAGE_DIR           = DATA_DIR / "val_images"
 VICON_CSV_PATH          = DATA_DIR / "vicon_data.csv"
 CALIBRATION_YAML_PATH   = DATA_DIR / "calibration.yaml"
-RESULT_PATH             = CAMCAL_ROOT / "results" / "collection_001" / "calc_and_verify_offset_001"
+RESULT_PATH             = CAMCAL_ROOT / "results" / "collection_001" / f"calc_and_verify_offset_{test_num}"
 TARGET_KPS_FILE_1       = PARENT_ROOT / "mesh_keypoints" / "soho" / "rendered_keypoints.json"
 TARGET_KPS_UNITS_1      = "m"
 TARGET_KPS_FILE_2       = PARENT_ROOT / "mesh_keypoints" / "soho_centered" / "rendered_keypoints.json"
@@ -59,7 +60,7 @@ TARGET_KPS_UNITS_2      = "m"
 # holdout precedence:
 # 1) explicit HOLDOUT_IMAGE_NUMBERS if not None
 # 2) HOLDOUT_FRACTION if not None
-HOLDOUT_IMAGE_NUMBERS   = [42, 43, 44, 45, 46, 47]
+HOLDOUT_IMAGE_NUMBERS   = [42, 43, 44, 45, 46, 47] # change this as needed
 HOLDOUT_FRACTION        = None
 HOLDOUT_SEED            = 0
 
