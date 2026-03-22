@@ -600,7 +600,7 @@ def build_vicon_dataframe_from_rosbag(
     vicon_rows  = []
     for image_path in image_paths:
         # image filenames already encode the original rosbag timestamp
-        frame_idx, image_stamp_ns   = parse_img_saver_ros_timestamp_v01(image_path)
+        frame_idx, image_stamp_ns, _= parse_img_saver_ros_timestamp_v01(image_path)
         cam_row, cam_delta_ns       = find_nearest_pose_row(image_stamp_ns, cam_rows)
         soho_row, soho_delta_ns     = find_nearest_pose_row(image_stamp_ns, soho_rows)
         image_timestamp_s           = float(image_stamp_ns) / 1e9
