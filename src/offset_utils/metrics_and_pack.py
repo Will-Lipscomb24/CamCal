@@ -89,44 +89,106 @@ def compute_pose_error_metrics(
                                     T_T_C_est      : NDArray[np.floating],
                                     T_T_C_truth    : NDArray[np.floating],
                                 ) -> dict[str, float]:
-    """ Compute per-frame translation and rotation errors in the camera frame """
-    from sc_pose.metrics.error import E_R, E_TN, E_T
+    """
+    Compute pose error metrics for either:
+      - a single pair of poses with shape (4, 4), or
+      - a batch of poses with shape (N, 4, 4)
+
+    Broadcasting is supported for one-vs-many:
+      - (4, 4) vs (N, 4, 4)
+      - (N, 4, 4) vs (4, 4)
+
+    Returns:
+      - scalars when the effective batch size is 1
+      - arrays of shape (N,) when the effective batch size is > 1
+    """
+    from sc_pose.metrics.error import batch_E_R, batch_E_T, batch_E_TN, E_R, E_T, E_TN
     from offset_utils.pose_ops import T_T_C_to_pose
     from sc_pose import wxyz_to_xyzw
 
+    # add helper functions 
+    def _as_batch(T: NDArray[np.floating], name: str) -> NDArray[np.float64]:
+        T   = np.asarray(T, dtype=np.float64)
+        if T.shape == (4, 4):
+            return T[None, ...]
+        if T.ndim == 3 and T.shape[1:] == (4, 4):
+            return T
+        raise ValueError(f"{name} must have shape (4, 4) or (N, 4, 4), got {T.shape}")
 
+    def _broadcast_batch(T: NDArray[np.float64], n: int, name: str) -> NDArray[np.float64]:
+        if T.shape[0] == n:
+            return T
+        if T.shape[0] == 1:
+            return np.broadcast_to(T, (n, 4, 4)).copy()
+        raise ValueError(f"{name} has batch size {T.shape[0]}, expected 1 or {n}")
+
+    # TODO: move to sc_pose
+    def _xyzw_to_wxyz_batch(q_xyzw: NDArray[np.floating]) -> NDArray[np.float64]:
+        q_xyzw  = np.asarray(q_xyzw, dtype=np.float64)
+        return np.concatenate([q_xyzw[..., 3:4], q_xyzw[..., :3]], axis = -1)
+
+    def _wxyz_to_xyzw_batch(q_wxyz: NDArray[np.floating]) -> NDArray[np.float64]:
+        q_wxyz  = np.asarray(q_wxyz, dtype=np.float64)
+        return np.concatenate([q_wxyz[..., 1:], q_wxyz[..., :1]], axis = -1)
+
+    T_est           = _as_batch(T_T_C_est, "T_T_C_est")
+    T_truth         = _as_batch(T_T_C_truth, "T_T_C_truth")
+    n               = max(T_est.shape[0], T_truth.shape[0])
+    T_est           = _broadcast_batch(T_est, n, "T_T_C_est")
+    T_truth         = _broadcast_batch(T_truth, n, "T_T_C_truth")
     T_T_C_est       = np.asarray(T_T_C_est, dtype = np.float64)
     T_T_C_truth     = np.asarray(T_T_C_truth, dtype = np.float64)
+    squeeze_output  = (n == 1)
 
-    q_CAM_2_TARGET_est, r_Co2To_C_est, _        = T_T_C_to_pose(T_T_C_est)
-    q_CAM_2_TARGET_truth, r_Co2To_C_truth, _    = T_T_C_to_pose(T_T_C_truth)
-    
+    r_Co2To_C_est   = T_est[:, :3, 3]
+    r_Co2To_C_truth = T_truth[:, :3, 3]
     translation_err = r_Co2To_C_truth - r_Co2To_C_est
-    sp_ET           = E_T(r_Co2To_C_truth, r_Co2To_C_est)
-    sp_ETN          = E_TN(r_Co2To_C_truth, r_Co2To_C_est)
-    sp_ER           = E_R(q_CAM_2_TARGET_truth, q_CAM_2_TARGET_est)
-    sp_ER_deg       = np.degrees(sp_ER)
-    sp_EC           = sp_ETN + sp_ER
-    q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
-    euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
+    sp_ET           = np.asarray(batch_E_T(r_Co2To_C_truth, r_Co2To_C_est), dtype=np.float64)
+    sp_ETN          = np.asarray(batch_E_TN(r_Co2To_C_truth, r_Co2To_C_est), dtype=np.float64)
+    
+    # for quaternions
+    qs          = []
+    qhats       = []
+    eulers      = []
+    for i in range(n):
+        T_T_C_est_i             = T_est[i]
+        T_T_C_truth_i           = T_truth[i]
+        q_CAM_2_TARGET_est, r_Co2To_C_est, _        = T_T_C_to_pose(T_T_C_est_i)
+        q_CAM_2_TARGET_truth, r_Co2To_C_truth, _    = T_T_C_to_pose(T_T_C_truth_i)
+        qs.append(q_CAM_2_TARGET_est)
+        qhats.append(q_CAM_2_TARGET_truth)
+        q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
+        euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
+        eulers.append(euler_err_xyz_deg)
+    sp_ER       = np.asarray(batch_E_R(qs, qhats), dtype = np.float64)
+    sp_ER_deg   = np.degrees(sp_ER)
+    sp_EC       = sp_ETN + sp_ER
+
+
+    # translation_err = r_Co2To_C_truth - r_Co2To_C_est
+    # sp_ET           = E_T(r_Co2To_C_truth, r_Co2To_C_est)
+    # sp_ETN          = E_TN(r_Co2To_C_truth, r_Co2To_C_est)
+    # sp_ER           = E_R(q_CAM_2_TARGET_truth, q_CAM_2_TARGET_est)
+    # sp_ER_deg       = np.degrees(sp_ER)
+    # sp_EC           = sp_ETN + sp_ER
+    # q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
+    # euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
 
     err_dict                = {
-                                "translation_error_x_m"      : float(translation_err[0]),
-                                "translation_error_y_m"      : float(translation_err[1]),
-                                "translation_error_z_m"      : float(translation_err[2]),
-                                "E_T"                        : sp_ET,
-                                "E_TN"                       : sp_ETN,
-                                "E_R_deg"                    : sp_ER_deg,
-                                'E_C'                        : sp_EC,
-                                "rotation_error_x_deg"       : float(euler_err_xyz_deg[0]),
-                                "rotation_error_y_deg"       : float(euler_err_xyz_deg[1]),
-                                "rotation_error_z_deg"       : float(euler_err_xyz_deg[2]),
+                                "mean_translation_error_x_m"    : float(translation_err[:, 0].mean()),
+                                "mean_translation_error_y_m"    : float(translation_err[:, 1].mean()),
+                                "mean_translation_error_z_m"    : float(translation_err[:, 2].mean()),
+                                "E_T"                           : sp_ET,
+                                "E_TN"                          : sp_ETN,
+                                "E_R_deg"                       : sp_ER_deg,
+                                'E_C'                           : sp_EC,
+                                "mean_rotation_error_x_deg"     : float(euler_err_xyz_deg[:, 0].mean()),
+                                "mean_rotation_error_y_deg"     : float(euler_err_xyz_deg[:, 1].mean()),
+                                "mean_rotation_error_z_deg"     : float(euler_err_xyz_deg[:, 2].mean()),
                             }
 
 
     return err_dict
-
-
 
 
 def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float | int]:
