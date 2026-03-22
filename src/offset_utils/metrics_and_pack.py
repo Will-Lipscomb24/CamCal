@@ -1,3 +1,5 @@
+# src/offset_utils/metrics_and_pack.py
+""" Utilities for computing pose error metrics and writing trajectory packs from rosbag data """
 from __future__ import annotations
 
 import json
@@ -9,14 +11,9 @@ import matplotlib
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from rosbags.highlevel import AnyReader
 from scipy.spatial.transform import Rotation as R
 
-from sc_pose.metrics.error import E_R
-
 from offset_utils.camera_io import parse_rosbag_frame_name
-from offset_utils.pose_ops import T_T_C_to_pose
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -66,9 +63,9 @@ def _yaml_scalar(value) -> str:
 
 
 def _to_yaml_lines(value, indent: int = 0) -> list[str]:
-    prefix = " " * indent
+    prefix      = " " * indent
     if isinstance(value, dict):
-        lines = []
+        lines   = []
         for key, val in value.items():
             if isinstance(val, (dict, list)):
                 lines.append(f"{prefix}{key}:")
@@ -77,7 +74,7 @@ def _to_yaml_lines(value, indent: int = 0) -> list[str]:
                 lines.append(f"{prefix}{key}: {_yaml_scalar(val)}")
         return lines
     if isinstance(value, list):
-        lines = []
+        lines   = []
         for item in value:
             if isinstance(item, (dict, list)):
                 lines.append(f"{prefix}-")
@@ -89,36 +86,47 @@ def _to_yaml_lines(value, indent: int = 0) -> list[str]:
 
 
 def compute_pose_error_metrics(
-                                T_T_C_est      : NDArray[np.floating],
-                                T_T_C_truth    : NDArray[np.floating],
-                             ) -> dict[str, float]:
+                                    T_T_C_est      : NDArray[np.floating],
+                                    T_T_C_truth    : NDArray[np.floating],
+                                ) -> dict[str, float]:
     """ Compute per-frame translation and rotation errors in the camera frame """
+    from sc_pose.metrics.error import E_R, E_TN, E_T
+    from offset_utils.pose_ops import T_T_C_to_pose
+    from sc_pose import wxyz_to_xyzw
+
+
     T_T_C_est       = np.asarray(T_T_C_est, dtype = np.float64)
     T_T_C_truth     = np.asarray(T_T_C_truth, dtype = np.float64)
 
-    q_CAM_2_TARGET_est, r_Co2To_C_est, _       = T_T_C_to_pose(T_T_C_est)
-    q_CAM_2_TARGET_truth, r_Co2To_C_truth, _   = T_T_C_to_pose(T_T_C_truth)
+    q_CAM_2_TARGET_est, r_Co2To_C_est, _        = T_T_C_to_pose(T_T_C_est)
+    q_CAM_2_TARGET_truth, r_Co2To_C_truth, _    = T_T_C_to_pose(T_T_C_truth)
+    
+    translation_err = r_Co2To_C_truth - r_Co2To_C_est
+    sp_ET           = E_T(r_Co2To_C_truth, r_Co2To_C_est)
+    sp_ETN          = E_TN(r_Co2To_C_truth, r_Co2To_C_est)
+    sp_ER           = E_R(q_CAM_2_TARGET_truth, q_CAM_2_TARGET_est)
+    sp_ER_deg       = np.degrees(sp_ER)
+    sp_EC           = sp_ETN + sp_ER
+    q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
+    euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
 
-    translation_err_vec   = r_Co2To_C_est - r_Co2To_C_truth
-    translation_err_mag   = float(np.linalg.norm(translation_err_vec, ord = 2))
-    rotation_err_rad      = float(E_R(q_CAM_2_TARGET_truth, q_CAM_2_TARGET_est))
-    rotation_err_deg      = float(np.degrees(rotation_err_rad))
+    err_dict                = {
+                                "translation_error_x_m"      : float(translation_err[0]),
+                                "translation_error_y_m"      : float(translation_err[1]),
+                                "translation_error_z_m"      : float(translation_err[2]),
+                                "E_T"                        : sp_ET,
+                                "E_TN"                       : sp_ETN,
+                                "E_R_deg"                    : sp_ER_deg,
+                                'E_C'                        : sp_EC,
+                                "rotation_error_x_deg"       : float(euler_err_xyz_deg[0]),
+                                "rotation_error_y_deg"       : float(euler_err_xyz_deg[1]),
+                                "rotation_error_z_deg"       : float(euler_err_xyz_deg[2]),
+                            }
 
-    R_C_2_T_est           = T_T_C_est[:3, :3].T
-    R_C_2_T_truth         = T_T_C_truth[:3, :3].T
-    R_err                 = R_C_2_T_est @ R_C_2_T_truth.T
-    euler_err_xyz_deg     = R.from_matrix(R_err).as_euler("xyz", degrees = True)
 
-    return {
-                "translation_error_x_m"      : float(translation_err_vec[0]),
-                "translation_error_y_m"      : float(translation_err_vec[1]),
-                "translation_error_z_m"      : float(translation_err_vec[2]),
-                "translation_error_mag_m"    : translation_err_mag,
-                "rotation_error_mag_deg"     : rotation_err_deg,
-                "rotation_error_x_deg"       : float(euler_err_xyz_deg[0]),
-                "rotation_error_y_deg"       : float(euler_err_xyz_deg[1]),
-                "rotation_error_z_deg"       : float(euler_err_xyz_deg[2]),
-            }
+    return err_dict
+
+
 
 
 def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float | int]:
@@ -246,12 +254,14 @@ def write_error_histograms(
 
     return histogram_manifest
 
-
+##################  ROS2 Functions ##################
 def load_pose_rows_from_rosbag(
                                 bag_dir      : Path,
                                 topic_name   : str,
                              ) -> list[PoseStampedRow]:
     """ Read PoseStamped rows from a rosbag topic """
+    from rosbags.highlevel import AnyReader
+
     rows = []
     with AnyReader([Path(bag_dir)]) as reader:
         connections = [conn for conn in reader.connections if conn.topic == topic_name]
@@ -285,6 +295,8 @@ def write_topic_yamls(
                         output_dir     : Path,
                      ) -> dict[str, object]:
     """ Write YAML dumps for the rosbag topics this workflow consumes """
+    from rosbags.highlevel import AnyReader
+
     bag_dir      = Path(bag_dir)
     output_dir   = Path(output_dir)
     output_dir.mkdir(parents = True, exist_ok = True)
@@ -451,7 +463,7 @@ def build_vicon_dataframe_from_rosbag(
     vicon_df = pd.DataFrame(vicon_rows)
     return vicon_df.sort_values("frame_index").reset_index(drop = True)
 
-
+##################  ROS2 Functions ##################
 def write_trajectory_pack(
                             output_dir           : Path,
                             frame_records        : list[dict[str, object]],
@@ -463,6 +475,7 @@ def write_trajectory_pack(
                             pack_dir_name        : str = "trajectory_pack",
                             lifted_filename      : str = "trajectory_lifted.json",
                             metadata_extras      : dict[str, object] | None = None,
+                            record_metadata_extras: list[dict[str, object] | None] | None = None,
                          ) -> tuple[Path, Path]:
     """ Write a nav_ros-style trajectory pack from offset-adjusted truth """
     output_dir       = Path(output_dir)
@@ -471,6 +484,11 @@ def write_trajectory_pack(
         shutil.rmtree(traj_dir)
     traj_dir.mkdir(parents = True, exist_ok = True)
     metadata_extras  = {} if metadata_extras is None else dict(metadata_extras)
+    if record_metadata_extras is not None and len(record_metadata_extras) != len(frame_records):
+        raise ValueError(
+                            "record_metadata_extras must be None or match frame_records length "
+                            f"({len(frame_records)}), received {len(record_metadata_extras)}."
+                        )
 
     lifted_records   = []
     for idx, record in enumerate(frame_records):
@@ -509,6 +527,8 @@ def write_trajectory_pack(
                     "soho_delta_s"           : soho_delta_s,
                    }
         out_meta.update(metadata_extras)
+        if record_metadata_extras is not None and record_metadata_extras[idx] is not None:
+            out_meta.update(dict(record_metadata_extras[idx]))
         with out_meta_path.open("w", encoding = "utf-8") as handle:
             json.dump(out_meta, handle, indent = 4)
 
