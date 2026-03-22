@@ -83,6 +83,26 @@ def collect_indxed_image_paths(
     return image_paths
 
 
+def select_image_paths(
+                        image_paths      : list[Path],
+                        record_indices   : list[int] | None,
+                    ) -> tuple[list[Path], list[int]]:
+    """ select a subset of image paths by zero-based record index, keeping both the paths and original indices """
+    # check if we need to select a subset of images
+    if record_indices is None or len(record_indices) == 0:
+        return image_paths, list(range(len(image_paths)))
+
+    # otherwise, select the specified indices, checking that they are valid and keeping track of the selected paths and their original indices
+    selected_paths      = []
+    selected_indices    = []
+    for record_index in record_indices:
+        if record_index < 0 or record_index >= len(image_paths):
+            raise IndexError(f"record index {record_index} is outside [0, {len(image_paths) - 1}]")
+        selected_paths.append(image_paths[record_index])
+        selected_indices.append(int(record_index))
+    return selected_paths, selected_indices
+
+
 def scale_K_to_image_size(
                             K                       : NDArray[np.floating],
                             calibration_width_px    : int,

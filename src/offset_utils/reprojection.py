@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 # required local import from sc-pose-utils repo
 from sc_pose.sensors.camera_projections import PoseProjector, draw_uv_points_on_image
 
-from src.offset_utils.camera_io import get_charuco_board_corners
+from src.offset_utils.camera_io import ensure_clean_dir, get_charuco_board_corners
 
 def load_target_points(
                             kps_file     : Path,
@@ -313,6 +313,56 @@ def draw_truth_charuco_overlay(
                     cv2.LINE_AA,
                 )
     return vis
+
+
+def write_sanity_overlays(
+                            traj_dir                 : Path,
+                            frame_records            : list[dict[str, object]],
+                            K                        : NDArray[np.floating],
+                            dist_coeffs              : NDArray[np.floating],
+                            target_pts_with_origin   : NDArray[np.floating],
+                            bboxes_xyxy              : list[list[int] | None] | None = None,
+                         ) -> Path:
+    """
+    Write one projected-pose sanity overlay per trajectory-pack record.
+    This is the quick visual check we use for truth packs and refined packs.
+    """
+    # create the sanity check directory, ensuring that any existing contents are cleared
+    traj_dir    = Path(traj_dir)
+    sanity_dir  = ensure_clean_dir(traj_dir / "sanity_check")
+    # if bboxes are provided, check that the length matches the number of frame records, and if not provided, 
+    # create a list of None values to use for consistent processing in the loop
+    if bboxes_xyxy is None:
+        bboxes_xyxy = [None] * len(frame_records)
+    if len(bboxes_xyxy) != len(frame_records):
+        raise ValueError(
+                            f"bboxes_xyxy length must match frame_records ({len(frame_records)}), got {len(bboxes_xyxy)}."
+                        )
+
+    for idx, (record, bbox_xyxy) in enumerate(zip(frame_records, bboxes_xyxy)):
+        token       = f"{idx:05d}"
+        image_path  = traj_dir / f"image_{token}.png"
+        T_T_C       = np.asarray(record["T_T_C"], dtype = np.float64)
+        uv_truth    = project_points_T_T_C(T_T_C, K, dist_coeffs, target_pts_with_origin)
+        overlay     = draw_pose_overlay(
+                                        image = str(image_path),
+                                        uv_points = uv_truth,
+                                        point_color = (255, 0, 0),
+                                        point_radius = 10,
+                                        point_thickness = 2,
+                                        origin_color = (0, 255, 0),
+                                        origin_radius = 20,
+                                        origin_thickness = 3,
+                                        text_label = image_path.name,
+                                     )
+
+        if bbox_xyxy is not None and len(bbox_xyxy) == 4:
+            xmin, ymin, xmax, ymax  = (int(value) for value in bbox_xyxy)
+            cv2.rectangle(overlay, (xmin, ymin), (xmax, ymax), (0, 255, 255), 2)
+
+        cv2.imwrite(str(sanity_dir / f"sanity_{token}.png"), overlay)
+
+    return sanity_dir
 
 
 def write_charuco_reprojection_overlays(

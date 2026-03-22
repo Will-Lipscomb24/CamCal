@@ -643,6 +643,34 @@ def build_vicon_dataframe_from_rosbag(
     return vicon_df.sort_values("frame_index").reset_index(drop = True)
 
 ##################  ROS2 Functions ##################
+def build_frame_record_from_vicon_row(
+                                        image_path           : Path,
+                                        vicon_row            : pd.Series,
+                                        q_CAM_2_TARGET       : NDArray[np.floating],
+                                        q_TARGET_2_CAM       : NDArray[np.floating],
+                                        r_Co2To_C            : NDArray[np.floating],
+                                        T_T_C                : NDArray[np.floating],
+                                    ) -> dict[str, object]:
+    """ build one trajectory-pack frame record from the rosbag-synced Vicon row and the chosen pose """
+    # this is appended to metadata in each frame's meta json as well
+    frame_index, image_stamp_ns, _  = parse_img_saver_ros_timestamp_v01(image_path)
+    return {
+            "image_path"            : str(image_path),
+            "frame"                 : str(image_path.name),
+            "frame_index"           : int(frame_index),
+            "image_timestamp_ns"    : int(image_stamp_ns),
+            "cam_timestamp_ns"      : int(vicon_row["cam_timestamp_ns"]),
+            "soho_timestamp_ns"     : int(vicon_row["soho_timestamp_ns"]),
+            "cam_delta_ms"          : float(vicon_row["cam_delta_ms"]),
+            "soho_delta_ms"         : float(vicon_row["soho_delta_ms"]),
+            "q_CAM_2_TARGET"        : np.asarray(q_CAM_2_TARGET, dtype = float).tolist(),
+            # TODO: maybe remove q_TARGET_2_CAM
+            "q_TARGET_2_CAM"        : np.asarray(q_TARGET_2_CAM, dtype = float).tolist(),
+            "r_Co2To_C"             : np.asarray(r_Co2To_C, dtype = float).tolist(),
+            "T_T_C"                 : np.asarray(T_T_C, dtype = float).tolist(),
+           }
+
+
 def write_trajectory_pack(
                             output_dir           : Path,
                             frame_records        : list[dict[str, object]],
