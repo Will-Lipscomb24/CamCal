@@ -1,0 +1,35 @@
+[build-system]
+requires        = ["setuptools>=64", "wheel"]
+build-backend   = "setuptools.build_meta"
+[project]
+name            = "camcal"
+version         = "0.0.1"
+dependencies    = [
+                    "numpy>=1.26",
+                    "numpy<2.0",
+                    "pandas>=2.2",
+                    "scipy>=1.11",
+                    "matplotlib>=3.8",
+                    "opencv-contrib-python>=4.9",
+                    "Pillow>=10.0",
+                    "PyYAML>=6.0",
+                    "tqdm>=4.66",
+                ]
+
+
+[tool.setuptools.packages.find]
+where           = ["src"]
+include         = ["camcal*"]
+
+
+# for setup, run at repo root:
+# python -m pip install -e .
+
+# may need to specific mamba path to python: ~/miniforge3/envs/neurals/bin/python -m pip install -e .
+
+# example run:
+# cd ~/agnc_repos/CamCal
+# python -m pip install -e .
+
+# to uninstall from environment:
+# python -m pip uninstall camcal
