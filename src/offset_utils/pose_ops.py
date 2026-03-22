@@ -12,8 +12,9 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation as R
 
-from sc_pose.mathtils.quaternion import q2rotm, rotm2q
+from sc_pose import q2rotm, rotm2q, wxyz_to_xyzw, xyzw_to_wxyz
 
 # set keys for indexing into Vicon CSV and offset JSON files, with defaults that match the current files but can be overridden if needed
 DEFAULT_VICON_KEYS  = {
