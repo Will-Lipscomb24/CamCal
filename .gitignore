@@ -5,5 +5,12 @@ __pycache__/
 # *.png
 # *.jpg
 # *.png
-
+*.zip
 sandbox/data/origin_frame
+
+data/*
+!data/.gitkeep
+calibration_images/*
+!calibration_images/.gitkeep
+results/*
+# !results/.gitkeep

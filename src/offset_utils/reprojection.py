@@ -221,6 +221,100 @@ def _draw_error_line(
             )
 
 
+def draw_truth_charuco_overlay(
+                                    image_path       : Path,
+                                    detection        : dict[str, object],
+                                    board,
+                                    T_T_C_truth      : NDArray[np.floating],
+                                    K                : NDArray[np.floating],
+                                    dist_coeffs      : NDArray[np.floating],
+                                    axis_length_m    : float,
+                               ) -> NDArray[np.uint8]:
+    """
+    draw the detected ChArUco corners/markers together with the solved-truth reprojection.
+    this is the overlay we use to inspect how the OpenCV solved truth pose sits on the calibration image
+    """
+    image   = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Failed to read image: {image_path}")
+    vis     = image.copy()
+
+    charuco_corners = np.asarray(detection["charuco_corners"], dtype = np.float64).reshape(-1, 2)
+    charuco_ids     = np.asarray(detection["charuco_ids"], dtype = np.int32).reshape(-1)
+    marker_corners  = [np.asarray(corner, dtype = np.float64).reshape(-1, 2) for corner in detection["marker_corners"]]
+    marker_ids      = np.asarray(detection["marker_ids"], dtype = np.int32).reshape(-1)
+
+    # draw the detected board evidence first so we can compare it against the truth reprojection
+    for pts in marker_corners:
+        cv2.polylines(
+                        vis,
+                        [np.round(pts).astype(np.int32).reshape(-1, 1, 2)],
+                        True,
+                        (0, 255, 0),
+                        2,
+                     )
+    for detected_pt in charuco_corners:
+        cv2.circle(vis, tuple(np.round(detected_pt).astype(int)), 5, (0, 180, 0), -1)
+
+    board_corners           = np.asarray(get_charuco_board_corners(board), dtype = np.float64).reshape(-1, 3)
+    marker_object_points    = [np.asarray(points, dtype = np.float64).reshape(-1, 3) for points in board.getObjPoints()]
+    board_marker_ids        = np.asarray(board.getIds(), dtype = np.int32).reshape(-1)
+    marker_obj_map          = {
+                                int(marker_id): obj_points
+                                for marker_id, obj_points in zip(board_marker_ids, marker_object_points)
+                              }
+
+    rvec_truth, _   = cv2.Rodrigues(np.asarray(T_T_C_truth, dtype = np.float64)[:3, :3])
+    tvec_truth      = np.asarray(T_T_C_truth, dtype = np.float64)[:3, 3].reshape(3, 1)
+
+    # project the detected markers through the solved truth pose so the board outline can be inspected directly
+    for marker_id in marker_ids:
+        obj_points  = marker_obj_map.get(int(marker_id))
+        if obj_points is None:
+            continue
+        proj, _     = cv2.projectPoints(
+                                        obj_points,
+                                        rvec_truth,
+                                        tvec_truth,
+                                        np.asarray(K, dtype = np.float64),
+                                        np.asarray(dist_coeffs, dtype = np.float64).reshape(5,),
+                                    )  
+        proj_pts    = np.asarray(proj, dtype = np.float64).reshape(-1, 2)
+        cv2.polylines(
+                        vis,
+                        [np.round(proj_pts).astype(np.int32).reshape(-1, 1, 2)],
+                        True,
+                        (255, 255, 0),
+                        2,
+                     )
+
+    if len(charuco_ids) > 0:
+        obj_points = board_corners[charuco_ids]
+        proj, _     = cv2.projectPoints(
+                                            obj_points,
+                                            rvec_truth,
+                                            tvec_truth,
+                                            np.asarray(K, dtype = np.float64),
+                                            np.asarray(dist_coeffs, dtype = np.float64).reshape(5,),
+                                        )
+        proj_pts    = np.asarray(proj, dtype = np.float64).reshape(-1, 2)
+        for proj_pt in proj_pts:
+            cv2.circle(vis, tuple(np.round(proj_pt).astype(int)), 7, (0, 0, 255), 2)
+
+    vis = draw_axes_on_image(vis, T_T_C_truth, K, dist_coeffs, axis_length_m)
+    cv2.putText(
+                    vis,
+                    image_path.name,
+                    (30, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+    return vis
+
+
 def write_charuco_reprojection_overlays(
                                             output_dir           : Path,
                                             reprojection_rows    : list[dict[str, object]],

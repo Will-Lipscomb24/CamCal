@@ -93,6 +93,18 @@ def _to_yaml_lines(value, indent: int = 0) -> list[str]:
     return [f"{prefix}{_yaml_scalar(value)}"]
 
 
+def write_json_payload(
+                            output_path  : Path,
+                            payload      : dict[str, object] | list[dict[str, object]],
+                      ) -> Path:
+    """ write a json payload with identation and ensure the parent directory exists """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents = True, exist_ok = True)
+    with output_path.open("w", encoding = "utf-8") as handle:
+        json.dump(payload, handle, indent = 4)
+    return output_path
+
+
 def compute_pose_error_metrics(
                                     T_T_C_est      : NDArray[np.floating],
                                     T_T_C_truth    : NDArray[np.floating],
@@ -226,6 +238,86 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
         for suffix in ("mean", "median", "std", "max_abs", "rmse"):
             summary[f"rotation_error_mag_deg_{suffix}"] = float(summary[f"E_R_deg_{suffix}"])
     return summary
+
+
+def build_pose_metric_rows(
+                            split_name      : str,
+                            image_numbers   : list[int],
+                            image_paths     : list[Path | str],
+                            T_T_C_est       : NDArray[np.floating],
+                            T_T_C_truth     : NDArray[np.floating],
+                        ) -> tuple[list[dict[str, object]], dict[str, float | int]]:
+    """ build per-frame metric rows and a summary dict for one split of images """
+    if len(image_numbers) != len(image_paths):
+        raise ValueError(
+                            "image_numbers and image_paths must have the same length "
+                            f"({len(image_numbers)} != {len(image_paths)})"
+                        )
+
+    if len(image_numbers) == 0:
+        empty_rows  : list[dict[str, object]] = []
+        empty_df    = pd.DataFrame(empty_rows)
+        summary     = summarize_frame_metrics(empty_df)
+        summary["split"]    = str(split_name)
+        return empty_rows, summary
+
+    # compute the pose error metrics for all frames in this split, then flatten them into arrays for easy indexing
+    metric_dict         = compute_pose_error_metrics(T_T_C_est = T_T_C_est, T_T_C_truth = T_T_C_truth)
+    metric_array_dict   = {
+                            key: np.asarray(value, dtype = np.float64).reshape(-1)
+                            for key, value in metric_dict.items()
+                        }
+    # validate that all metric arrays have the same length as the number of images in this split, so we do not accidentally misalign later when building rows
+    n   = len(image_numbers)
+    for key, value in metric_array_dict.items():
+        if len(value) != n:
+            raise ValueError(
+                                f"Metric '{key}' has length {len(value)}, expected {n} for split '{split_name}'"
+                            )
+    # build one row per frame with all the metrics flattened into scalar columns, so we can later build a dataframe and write out as csv
+    metric_rows = []
+    for idx, image_number in enumerate(image_numbers):
+        image_path  = Path(image_paths[idx])
+        row         = {
+                        "split"         : str(split_name),
+                        "image_number"  : int(image_number),
+                        "frame"         : image_path.name,
+                        "image_path"    : str(image_path),
+                    }
+        # add all the metrics as scalar columns in this row, so we can later build a dataframe and write out as csv
+        for key, values in metric_array_dict.items():
+            row[key]    = float(values[idx])
+        metric_rows.append(row)
+
+    # build a summary dict for this split by aggregating the frame metrics, so we can later write out as json or display in a dashboard
+    metric_df           = pd.DataFrame(metric_rows)
+    # summarize results 
+    summary             = summarize_frame_metrics(metric_df)
+    summary["split"]    = str(split_name)
+    return metric_rows, summary
+
+
+def write_metric_bundle(
+                            output_stem     : Path,
+                            metric_rows     : list[dict[str, object]],
+                            summary         : dict[str, float | int],
+                       ) -> tuple[Path, Path]:
+    """ write one metric bundle as csv rows plus a json payload with rows and summary """
+    output_stem = Path(output_stem)
+    output_stem.parent.mkdir(parents = True, exist_ok = True)
+    csv_path    = output_stem.with_suffix(".csv")
+    json_path   = output_stem.with_suffix(".json")
+
+    metric_df = pd.DataFrame(metric_rows)
+    metric_df.to_csv(csv_path, index = False)
+    write_json_payload(
+                        json_path,
+                        {
+                            "summary"   : dict(summary),
+                            "rows"      : metric_rows,
+                        },
+                      )
+    return csv_path, json_path
 
 
 def write_error_histograms(

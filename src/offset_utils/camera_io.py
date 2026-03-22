@@ -184,6 +184,30 @@ def build_charuco_board(
     return board, aruco_dict
 
 
+def build_camera_pose_rows_from_reprojection_rows(
+                                                    reprojection_rows : list[dict[str, object]],
+                                                ) -> list[dict[str, float | int | str]]:
+    """ flatten the valid ChArUco reprojection rows into OpenCV pose csv layout """
+    camera_pose_rows = []
+    for row in reprojection_rows:
+        rvec        = np.asarray(row["rvec"], dtype = float).reshape(3,)
+        tvec        = np.asarray(row["tvec"], dtype = float).reshape(3,)
+        image_path  = Path(row["image_path"])
+        camera_pose_rows.append(
+                                {
+                                    "frame"         : image_path.name,
+                                    "image_number"  : int(row["image_number"]),
+                                    "rvec_x"        : float(rvec[0]),
+                                    "rvec_y"        : float(rvec[1]),
+                                    "rvec_z"        : float(rvec[2]),
+                                    "tvec_x"        : float(tvec[0]),
+                                    "tvec_y"        : float(tvec[1]),
+                                    "tvec_z"        : float(tvec[2]),
+                                }
+                              )
+    return camera_pose_rows
+
+
 
 ############################# ChArUco detection and pose estimation functions #############################
 #### these  functions handle differences in OpenCV versions for ArUco detection and pose estimation, 
