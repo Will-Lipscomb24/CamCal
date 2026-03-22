@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 # required local import from sc-pose-utils repo
 from sc_pose.sensors.camera_projections import PoseProjector, draw_uv_points_on_image
 
-from src.offset_utils.camera_io import ensure_clean_dir, get_charuco_board_corners
+from offset_utils.camera_io import ensure_clean_dir, get_charuco_board_corners
 
 def load_target_points(
                             kps_file     : Path,

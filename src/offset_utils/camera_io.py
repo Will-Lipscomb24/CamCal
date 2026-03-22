@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 # local import 
-from src.offset_utils.pose_ops import build_transform
+from offset_utils.pose_ops import build_transform
 
 def ensure_clean_dir(path: Path) -> Path:
     """ delete and recreate a directory """
@@ -328,7 +328,7 @@ def _estimate_charuco_pose(
                                                                 )
         return bool(success), rvec, tvec
 
-    board_corners   = _get_charuco_board_corners(board)
+    board_corners   = get_charuco_board_corners(board)
     ids_flat        = np.asarray(charuco_ids, dtype = np.int32).reshape(-1)
     obj_points      = np.asarray(board_corners[ids_flat], dtype = np.float64).reshape(-1, 3)
     img_points      = np.asarray(charuco_corners, dtype = np.float64).reshape(-1, 2)
