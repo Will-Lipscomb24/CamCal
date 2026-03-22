@@ -32,27 +32,34 @@ class PoseStampedRow:
 
 def _ros_value_to_builtin(value, depth: int = 0):
     """ Convert a ROS message object into plain Python containers """
+    # guard against pathological recursion on nested ROS message trees
     if depth > 6:
         return str(type(value).__name__)
+    # keep already-serializable scalars as-is
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    # recursively convert tuples/lists so yaml/json dumping is straightforward
     if isinstance(value, (list, tuple)):
         return [_ros_value_to_builtin(item, depth + 1) for item in value]
+    # ROS messages often expose data through __slots__ instead of __dict__
     if hasattr(value, "__slots__"):
         return {
                     str(slot): _ros_value_to_builtin(getattr(value, slot), depth + 1)
                     for slot in value.__slots__
                     if hasattr(value, slot)
                }
+    # fall back to a normal object dict when present
     if hasattr(value, "__dict__"):
         return {
                     str(key): _ros_value_to_builtin(val, depth + 1)
                     for key, val in vars(value).items()
                }
+    # final fallback: stringify anything custom we do not know how to recurse into
     return str(value)
 
 
 def _yaml_scalar(value) -> str:
+    # keep yaml scalar formatting explicit instead of depending on another serializer
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -63,6 +70,7 @@ def _yaml_scalar(value) -> str:
 
 
 def _to_yaml_lines(value, indent: int = 0) -> list[str]:
+    # minimal yaml writer for the topic dump utility below
     prefix      = " " * indent
     if isinstance(value, dict):
         lines   = []
@@ -106,7 +114,7 @@ def compute_pose_error_metrics(
     from offset_utils.pose_ops import T_T_C_to_pose
     from sc_pose import wxyz_to_xyzw
 
-    # add helper functions 
+    # normalize both single-frame and batch inputs into a batch shape
     def _as_batch(T: NDArray[np.floating], name: str) -> NDArray[np.float64]:
         T   = np.asarray(T, dtype=np.float64)
         if T.shape == (4, 4):
@@ -115,6 +123,7 @@ def compute_pose_error_metrics(
             return T
         raise ValueError(f"{name} must have shape (4, 4) or (N, 4, 4), got {T.shape}")
 
+    # allow one-vs-many comparisons by broadcasting the singleton transform
     def _broadcast_batch(T: NDArray[np.float64], n: int, name: str) -> NDArray[np.float64]:
         if T.shape[0] == n:
             return T
@@ -128,13 +137,15 @@ def compute_pose_error_metrics(
     T_est           = _broadcast_batch(T_est, n, "T_T_C_est")
     T_truth         = _broadcast_batch(T_truth, n, "T_T_C_truth")
 
+    # translation lives directly in the ^C T_T homogeneous transform
     r_Co2To_C_est   = T_est[:, :3, 3]
     r_Co2To_C_truth = T_truth[:, :3, 3]
     translation_err = r_Co2To_C_truth - r_Co2To_C_est
     sp_ET           = np.asarray(batch_E_T(r_Co2To_C_truth, r_Co2To_C_est), dtype=np.float64)
     sp_ETN          = np.asarray(batch_E_TN(r_Co2To_C_truth, r_Co2To_C_est), dtype=np.float64)
     
-    # for quaternions
+    # collect quaternion and euler diagnostics frame-by-frame
+    # T_T_C_to_pose keeps the quaternion convention aligned with the rest of CamCal
     qs          = []
     qhats       = []
     eulers      = []
@@ -145,9 +156,12 @@ def compute_pose_error_metrics(
         q_CAM_2_TARGET_truth, _, _    = T_T_C_to_pose(T_T_C_truth_i)
         qs.append(q_CAM_2_TARGET_est)
         qhats.append(q_CAM_2_TARGET_truth)
+        # compute the relative quaternion in scipy's xyzw convention, then unpack xyz euler residuals
         q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
         euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
         eulers.append(euler_err_xyz_deg)
+
+    # the sc_pose batch metrics give us the scalar translation and rotation magnitudes
     sp_ER       = np.asarray(batch_E_R(qs, qhats), dtype = np.float64)
     sp_ER_deg   = np.degrees(sp_ER)
     sp_EC       = sp_ETN + sp_ER
@@ -166,6 +180,7 @@ def compute_pose_error_metrics(
                     "rotation_error_z_deg": eulers[:, 2],
             }
 
+    # preserve the old single-frame call pattern by squeezing N=1 back to scalars
     if n == 1:
         return {key: float(value[0]) for key, value in err_dict.items()}
     return err_dict
@@ -192,6 +207,7 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
                     "rotation_error_y_deg",
                     "rotation_error_z_deg",
                   ]
+    # reduce each scalar column into a small set of summary statistics
     for column in scalar_cols:
         if column not in frame_metrics_df.columns:
             continue
@@ -202,7 +218,7 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
         summary[f"{column}_max_abs"] = float(np.nanmax(np.abs(values)))
         summary[f"{column}_rmse"] = float(np.sqrt(np.nanmean(values * values)))
 
-    # Backward-compatible aliases for older consumers that expected magnitude keys.
+    # preserve the previous summary field names so older consumers do not break
     if "E_T_mean" in summary and "translation_error_mag_m_mean" not in summary:
         for suffix in ("mean", "median", "std", "max_abs", "rmse"):
             summary[f"translation_error_mag_m_{suffix}"] = float(summary[f"E_T_{suffix}"])
@@ -221,6 +237,7 @@ def write_error_histograms(
     output_dir               = Path(output_dir)
     output_dir.mkdir(parents = True, exist_ok = True)
 
+    # one entry here means: write one histogram png and one manifest block for that metric
     histogram_specs = {
                         "translation_error_x_m"   : ("Translation Error X", "Translation Error X [m]"),
                         "translation_error_y_m"   : ("Translation Error Y", "Translation Error Y [m]"),
@@ -239,11 +256,13 @@ def write_error_histograms(
         if column_name not in frame_metrics_df.columns:
             continue
 
+        # coerce to numeric so mixed dataframe columns do not break plotting
         values = pd.to_numeric(frame_metrics_df[column_name], errors = "coerce").to_numpy(dtype = float)
         values = values[np.isfinite(values)]
         if values.size == 0:
             continue
 
+        # when all values are nearly identical, make a small artificial bin range so matplotlib still draws something useful
         if values.size == 1 or np.allclose(values, values[0]):
             center              = float(values[0])
             pad                 = max(abs(center) * 0.05, 1e-9)
@@ -290,6 +309,7 @@ def write_error_histograms(
         fig.savefig(hist_path)
         plt.close(fig)
 
+        # store the plot path and raw histogram bins so later tools do not need to re-read the png
         histogram_manifest[column_name] = {
                                             "plot_title"         : plot_title,
                                             "path"               : str(hist_path),
@@ -319,11 +339,13 @@ def load_pose_rows_from_rosbag(
 
     rows = []
     with AnyReader([Path(bag_dir)]) as reader:
+        # resolve all connections for the requested topic up front
         connections = [conn for conn in reader.connections if conn.topic == topic_name]
         if len(connections) == 0:
             raise RuntimeError(f"Topic not found in rosbag: {topic_name}")
 
         for connection, _, rawdata in reader.messages(connections = connections):
+            # deserialize each pose message into a small typed row that is easy to sort and match later
             msg         = reader.deserialize(rawdata, connection.msgtype)
             stamp_ns    = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
             rows.append(
@@ -338,6 +360,7 @@ def load_pose_rows_from_rosbag(
                                         qz = float(msg.pose.orientation.z),
                                      )
                        )
+    # downstream matching assumes monotonic timestamps
     rows.sort(key = lambda row: row.stamp_ns)
     if len(rows) == 0:
         raise RuntimeError(f"No messages found for topic: {topic_name}")
@@ -359,6 +382,7 @@ def write_topic_yamls(
     topic_entries = []
     with AnyReader([bag_dir]) as reader:
         for topic_name in topic_names:
+            # dump the exact messages used by this workflow so syncing/debugging can be inspected offline
             connections = [conn for conn in reader.connections if conn.topic == topic_name]
             if len(connections) == 0:
                 raise RuntimeError(f"Topic not found in rosbag: {topic_name}")
@@ -382,6 +406,7 @@ def write_topic_yamls(
                 if example_message is None:
                     example_message = msg_builtin
 
+                # record both rosbag receive time and header stamp when available
                 if hasattr(msg, "header") and hasattr(msg.header, "stamp"):
                     header_stamp_ns = int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
                     if first_header_stamp_ns is None:
@@ -438,6 +463,7 @@ def write_topic_yamls(
                     "num_topics"     : int(len(topic_entries)),
                     "topics"         : topic_entries,
                }
+    # write one small manifest that points to all per-topic yaml dumps
     manifest_path = output_dir / "manifest.yaml"
     manifest_path.write_text("\n".join(_to_yaml_lines(manifest)) + "\n", encoding = "utf-8")
     return {
@@ -452,6 +478,7 @@ def find_nearest_pose_row(
                             pose_rows       : list[PoseStampedRow],
                          ) -> tuple[PoseStampedRow, int]:
     """ Find the nearest rosbag pose row to an image timestamp """
+    # pose_rows is already sorted, so use searchsorted instead of scanning the whole list
     stamp_array = np.array([row.stamp_ns for row in pose_rows], dtype = np.int64)
     idx         = int(np.searchsorted(stamp_array, image_stamp_ns))
     candidate_indices = []
@@ -460,6 +487,7 @@ def find_nearest_pose_row(
     if idx > 0:
         candidate_indices.append(idx - 1)
 
+    # the best match is either the insertion point or the sample immediately before it
     best_idx    = min(candidate_indices, key = lambda ii: abs(int(stamp_array[ii]) - int(image_stamp_ns)))
     best_row    = pose_rows[best_idx]
     delta_ns    = int(best_row.stamp_ns) - int(image_stamp_ns)
@@ -473,11 +501,13 @@ def build_vicon_dataframe_from_rosbag(
                                         target_topic     : str,
                                      ) -> pd.DataFrame:
     """ Build a Vicon-style dataframe by matching rosbag truth to extracted images """
+    # read the two PoseStamped truth streams we want to time-align to the extracted images
     cam_rows    = load_pose_rows_from_rosbag(bag_dir, cam_topic)
     soho_rows   = load_pose_rows_from_rosbag(bag_dir, target_topic)
 
     vicon_rows  = []
     for image_path in image_paths:
+        # image filenames already encode the original rosbag timestamp
         frame_idx, image_stamp_ns = parse_rosbag_frame_name(image_path)
         cam_row, cam_delta_ns     = find_nearest_pose_row(image_stamp_ns, cam_rows)
         soho_row, soho_delta_ns   = find_nearest_pose_row(image_stamp_ns, soho_rows)
@@ -485,6 +515,7 @@ def build_vicon_dataframe_from_rosbag(
         cam_timestamp_s           = float(cam_row.stamp_ns) / 1e9
         soho_timestamp_s          = float(soho_row.stamp_ns) / 1e9
 
+        # store the matched truth in the same column layout the rest of the offset code already expects
         vicon_rows.append(
                             {
                                 "frame"                 : image_path.name,
@@ -515,6 +546,7 @@ def build_vicon_dataframe_from_rosbag(
                             }
                          )
 
+    # keep output ordering stable and aligned to frame index
     vicon_df = pd.DataFrame(vicon_rows)
     return vicon_df.sort_values("frame_index").reset_index(drop = True)
 
@@ -535,6 +567,7 @@ def write_trajectory_pack(
     """ Write a nav_ros-style trajectory pack from offset-adjusted truth """
     output_dir       = Path(output_dir)
     traj_dir         = output_dir / str(pack_dir_name)
+    # rewrite the pack dir from scratch each time so outputs always reflect the current run
     if traj_dir.exists():
         shutil.rmtree(traj_dir)
     traj_dir.mkdir(parents = True, exist_ok = True)
@@ -547,18 +580,21 @@ def write_trajectory_pack(
 
     lifted_records   = []
     for idx, record in enumerate(frame_records):
+        # the pack format uses deterministic 5-digit tokens for paired image/meta filenames
         token = f"{idx:05d}"
         src_image_path    = Path(record["image_path"])
         out_img_path      = traj_dir / f"image_{token}.png"
         out_meta_path     = traj_dir / f"meta_{token}.json"
         shutil.copy2(src_image_path, out_img_path)
 
+        # unpack pose pieces into the exact nav_ros metadata schema
         q_CAM_2_TARGET    = np.asarray(record["q_CAM_2_TARGET"], dtype = float).reshape(4,)
         r_Co2To_C         = np.asarray(record["r_Co2To_C"], dtype = float).reshape(3,)
         T_T_C             = np.asarray(record["T_T_C"], dtype = float).reshape(4, 4)
         cam_delta_s       = float(record["cam_delta_ms"]) / 1000.0
         soho_delta_s      = float(record["soho_delta_ms"]) / 1000.0
 
+        # each meta json carries the pose, camera intrinsics, timestamps, and source bookkeeping
         out_meta = {
                     str(pose_key)            : np.concatenate([r_Co2To_C, q_CAM_2_TARGET]).tolist(),
                     "pose_label"             : "translation_in_camera_frame + q_CAM_2_TARGET",
@@ -581,12 +617,14 @@ def write_trajectory_pack(
                     "cam_delta_s"            : cam_delta_s,
                     "soho_delta_s"           : soho_delta_s,
                    }
+        # allow caller-wide metadata and per-record metadata to be merged on top
         out_meta.update(metadata_extras)
         if record_metadata_extras is not None and record_metadata_extras[idx] is not None:
             out_meta.update(dict(record_metadata_extras[idx]))
         with out_meta_path.open("w", encoding = "utf-8") as handle:
             json.dump(out_meta, handle, indent = 4)
 
+        # the lifted json is just an index into the per-frame image/meta files in the pack dir
         lifted_records.append(
                                 {
                                     "token"              : token,
@@ -600,6 +638,7 @@ def write_trajectory_pack(
 
     lifted_path = output_dir / str(lifted_filename)
     with lifted_path.open("w", encoding = "utf-8") as handle:
+        # keep the lifted manifest small: it points to the pack dir and enumerates the generated records
         json.dump(
                     {
                         "num_records"        : int(len(lifted_records)),
