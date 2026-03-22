@@ -50,7 +50,7 @@ IMAGE_DIR               = DATA_DIR / "images"
 VAL_IMAGE_DIR           = DATA_DIR / "val_images"
 VICON_CSV_PATH          = DATA_DIR / "vicon_data.csv"
 CALIBRATION_YAML_PATH   = DATA_DIR / "calibration.yaml"
-RESULT_PATH             = CAMCAL_ROOT / "results" / "collection_001" / "calc_and_verify_offset"
+RESULT_PATH             = CAMCAL_ROOT / "results" / "collection_001" / "calc_and_verify_offset_001"
 TARGET_KPS_FILE_1       = PARENT_ROOT / "mesh_keypoints" / "soho" / "rendered_keypoints.json"
 TARGET_KPS_UNITS_1      = "m"
 TARGET_KPS_FILE_2       = PARENT_ROOT / "mesh_keypoints" / "soho_centered" / "rendered_keypoints.json"
@@ -81,7 +81,8 @@ AXIS_LENGTH_M           = 3.0 * SQUARE_LEN_M
 TvT0_GUESS_MM           = [-228, -55, 30]
 r_To2T1_T               = [237.4940214582, 52.3612819210, -26.9223600937]
 ##################################### Inputs #####################################
-
+print(f"Running {HERE.name}")
+print(f"Results will be stored in {RESULT_PATH}")
 
 def _select_holdout_numbers(
                                 matched_image_numbers      : list[int],
@@ -185,7 +186,7 @@ def main() -> None:
     camera_pose_df.to_csv(camera_pose_csv_path, index = False)
 
     # sync the valid ChArUco measurements with the Vicon rows by image number before we choose the holdout set
-    vicon_df    = load_vicon_dataframe(vicon_csv_path)
+    vicon_df                = load_vicon_dataframe(vicon_csv_path)
     T_CvV_by_image, T_TvV_by_image, vicon_image_numbers                         = build_vicon_transform_series(vicon_df)
     T_T_C_sync_all, T_CvV_sync_all, T_TvV_sync_all, matched_image_numbers, _    = sync_charuco_vicon_measurements(
                                                                                                                     T_T_C_array = T_T_C_array,
@@ -222,7 +223,8 @@ def main() -> None:
     T0_CvC          = np.eye(4, dtype = np.float64)
     T0_TvT          = np.eye(4, dtype = np.float64)
     T0_TvT[:3, 3]   = np.asarray(TvT0_GUESS_MM, dtype = np.float64).reshape(3,) / 1000.0
-
+    print(f"Starting solve with initial guess T0_CvC:\n{T0_CvC}")
+    print(f"Starting solve with initial guess T0_TvT:\n{T0_TvT}")
     T_CvC, T_TvT, result, initial_cost  = solve_rwhe(
                                                         T0_CvC = T0_CvC,
                                                         T0_TvT = T0_TvT,
@@ -375,7 +377,8 @@ def main() -> None:
                 "termination_message": str(result.message),
             }
     write_json_payload(result_root / "summary.json", summary)
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent = 2))
+    print(f"Finished. Results stored in {result_root}")
 
 
 if __name__ == "__main__":
