@@ -133,12 +133,14 @@ def main() -> None:
     target_kps_file         = TARGET_KPS_FILE_1.expanduser().resolve()
     images_discovered       = sorted(image_dir.glob("*.png"))
 
-    truth_charuco_dir       = result_root / "truth_charuco_reprojection"
-    truth_target_dir        = result_root / "truth_target_reprojection"
-    holdout_combined_dir    = result_root / "holdout_combined_reprojection"
-    truth_charuco_dir.mkdir(parents = True, exist_ok = True)
-    truth_target_dir.mkdir(parents = True, exist_ok = True)
-    holdout_combined_dir.mkdir(parents = True, exist_ok = True)
+    openc_cv_charcuo_dir    = result_root / "opencv_charuco_reprojection"
+    offset_charuco_dir      = result_root / "vicon_offset_corrected_charuco_reprojection"
+    offset_target_dir       = result_root / "vicon_offset_corrected_target_reprojection"
+    holdout_target_dir      = result_root / "vicon_offset_corrected_holdout_combined_target_reprojection"
+    openc_cv_charcuo_dir.mkdir(parents = True, exist_ok = True)
+    offset_charuco_dir.mkdir(parents = True, exist_ok = True)
+    offset_target_dir.mkdir(parents = True, exist_ok = True)
+    holdout_target_dir.mkdir(parents = True, exist_ok = True)
 
     # load camera intrinsics, board geometry, and the target keypoints used for the visual verification overlays
     K, dist_coeffs, _   = load_camera_calibration(
@@ -195,6 +197,8 @@ def main() -> None:
                                                                                                                     T_TvV_by_image = T_TvV_by_image,
                                                                                                                     excluded_image_numbers = None,
                                                                                                                 )
+
+    # T_T_C_sync_all holds the opencv ChArUco pose estimates (cv2.pnp)
 
     matched_set                 = set(matched_image_numbers)
     valid_index_by_image        = {int(image_number): idx for idx, image_number in enumerate(valid_image_numbers)}
@@ -276,6 +280,17 @@ def main() -> None:
         T_T_C_truth = truth_T_T_C_all[idx]
         detection   = matched_reprojection_rows[idx]["detection"]
 
+        opencv_charcuo_overlay  = draw_truth_charuco_overlay(
+                                                                image_path = image_path,
+                                                                detection = detection,
+                                                                board = board,
+                                                                T_T_C_truth = T_T_C_sync_all[idx],
+                                                                K = K,
+                                                                dist_coeffs = dist_coeffs,
+                                                                axis_length_m = AXIS_LENGTH_M,
+                                                            )
+        opencv_charcuo_path     = openc_cv_charcuo_dir / f"opencv_charuco_{image_path.name}"
+        cv2.imwrite(str(opencv_charcuo_path), opencv_charcuo_overlay) 
         truth_charuco_overlay   = draw_truth_charuco_overlay(
                                                                 image_path = image_path,
                                                                 detection = detection,
@@ -285,7 +300,7 @@ def main() -> None:
                                                                 dist_coeffs = dist_coeffs,
                                                                 axis_length_m = AXIS_LENGTH_M,
                                                             )
-        truth_charuco_path      = truth_charuco_dir / f"truth_charuco_{image_path.name}"
+        truth_charuco_path      = offset_charuco_dir / f"truth_charuco_{image_path.name}"
         cv2.imwrite(str(truth_charuco_path), truth_charuco_overlay)
 
         uv_truth                = project_points_T_T_C(T_T_C_truth, K, dist_coeffs, target_pts_with_origin)
@@ -300,7 +315,7 @@ def main() -> None:
                                                         origin_thickness = 3,
                                                         text_label = image_path.name,
                                                     )
-        truth_target_path       = truth_target_dir / f"truth_target_{image_path.name}"
+        truth_target_path       = offset_target_dir / f"truth_target_{image_path.name}"
         cv2.imwrite(str(truth_target_path), truth_target_overlay)
 
         if image_number in holdout_set:
@@ -311,7 +326,7 @@ def main() -> None:
                                                                 uv_truth = uv_truth,
                                                                 text_label = image_path.name,
                                                             )
-            combined_overlay_path   = holdout_combined_dir / f"holdout_combined_{image_path.name}"
+            combined_overlay_path   = holdout_target_dir / f"holdout_combined_{image_path.name}"
             cv2.imwrite(str(combined_overlay_path), combined_overlay)
             combined_overlay_paths[image_number] = str(combined_overlay_path)
 
@@ -360,9 +375,9 @@ def main() -> None:
                 "train_metrics_json": str(result_root / "train_metrics.json"),
                 "holdout_metrics_csv": str(result_root / "holdout_metrics.csv"),
                 "holdout_metrics_json": str(result_root / "holdout_metrics.json"),
-                "truth_charuco_reprojection_dir": str(truth_charuco_dir),
-                "truth_target_reprojection_dir": str(truth_target_dir),
-                "holdout_combined_reprojection_dir": str(holdout_combined_dir),
+                "truth_charuco_reprojection_dir": str(offset_charuco_dir),
+                "truth_target_reprojection_dir": str(offset_target_dir),
+                "holdout_combined_reprojection_dir": str(holdout_target_dir),
                 "images_discovered": int(len(images_discovered)),
                 "valid_charuco_detections": int(len(valid_image_numbers)),
                 "matched_measurements": int(len(matched_image_numbers)),
