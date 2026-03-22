@@ -102,7 +102,7 @@ def compute_pose_error_metrics(
       - scalars when the effective batch size is 1
       - arrays of shape (N,) when the effective batch size is > 1
     """
-    from sc_pose.metrics.error import batch_E_R, batch_E_T, batch_E_TN, E_R, E_T, E_TN
+    from sc_pose.metrics.error import batch_E_R, batch_E_T, batch_E_TN
     from offset_utils.pose_ops import T_T_C_to_pose
     from sc_pose import wxyz_to_xyzw
 
@@ -122,22 +122,11 @@ def compute_pose_error_metrics(
             return np.broadcast_to(T, (n, 4, 4)).copy()
         raise ValueError(f"{name} has batch size {T.shape[0]}, expected 1 or {n}")
 
-    # TODO: move to sc_pose
-    def _xyzw_to_wxyz_batch(q_xyzw: NDArray[np.floating]) -> NDArray[np.float64]:
-        q_xyzw  = np.asarray(q_xyzw, dtype=np.float64)
-        return np.concatenate([q_xyzw[..., 3:4], q_xyzw[..., :3]], axis = -1)
-
-    def _wxyz_to_xyzw_batch(q_wxyz: NDArray[np.floating]) -> NDArray[np.float64]:
-        q_wxyz  = np.asarray(q_wxyz, dtype=np.float64)
-        return np.concatenate([q_wxyz[..., 1:], q_wxyz[..., :1]], axis = -1)
-
     T_est           = _as_batch(T_T_C_est, "T_T_C_est")
     T_truth         = _as_batch(T_T_C_truth, "T_T_C_truth")
     n               = max(T_est.shape[0], T_truth.shape[0])
     T_est           = _broadcast_batch(T_est, n, "T_T_C_est")
     T_truth         = _broadcast_batch(T_truth, n, "T_T_C_truth")
-    T_T_C_est       = np.asarray(T_T_C_est, dtype = np.float64)
-    T_T_C_truth     = np.asarray(T_T_C_truth, dtype = np.float64)
 
     r_Co2To_C_est   = T_est[:, :3, 3]
     r_Co2To_C_truth = T_truth[:, :3, 3]
@@ -148,24 +137,20 @@ def compute_pose_error_metrics(
     # for quaternions
     qs          = []
     qhats       = []
-    qerrs       = []
     eulers      = []
     for i in range(n):
         T_T_C_est_i             = T_est[i]
         T_T_C_truth_i           = T_truth[i]
-        q_CAM_2_TARGET_est, r_Co2To_C_est, _        = T_T_C_to_pose(T_T_C_est_i)
-        q_CAM_2_TARGET_truth, r_Co2To_C_truth, _    = T_T_C_to_pose(T_T_C_truth_i)
+        q_CAM_2_TARGET_est, _, _      = T_T_C_to_pose(T_T_C_est_i)
+        q_CAM_2_TARGET_truth, _, _    = T_T_C_to_pose(T_T_C_truth_i)
         qs.append(q_CAM_2_TARGET_est)
         qhats.append(q_CAM_2_TARGET_truth)
         q_err_xyzw              = ( R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_est)) * R.from_quat(wxyz_to_xyzw(q_CAM_2_TARGET_truth)).inv() ).as_quat()
-        qerrs.append(q_err_xyzw)
         euler_err_xyz_deg       = R.from_quat(q_err_xyzw).as_euler("xyz", degrees = True)
         eulers.append(euler_err_xyz_deg)
     sp_ER       = np.asarray(batch_E_R(qs, qhats), dtype = np.float64)
     sp_ER_deg   = np.degrees(sp_ER)
     sp_EC       = sp_ETN + sp_ER
-    qs          = np.asarray(qs, dtype = np.float64)
-    qhats       = np.asarray(qhats, dtype = np.float64)
     eulers      = np.asarray(eulers, dtype = np.float64)
 
     err_dict    = {
@@ -199,8 +184,10 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
                     "translation_error_x_m",
                     "translation_error_y_m",
                     "translation_error_z_m",
-                    "translation_error_mag_m",
-                    "rotation_error_mag_deg",
+                    "E_T",
+                    "E_TN",
+                    "E_R_deg",
+                    "E_C",
                     "rotation_error_x_deg",
                     "rotation_error_y_deg",
                     "rotation_error_z_deg",
@@ -214,6 +201,14 @@ def summarize_frame_metrics(frame_metrics_df: pd.DataFrame) -> dict[str, float |
         summary[f"{column}_std"] = float(np.nanstd(values))
         summary[f"{column}_max_abs"] = float(np.nanmax(np.abs(values)))
         summary[f"{column}_rmse"] = float(np.sqrt(np.nanmean(values * values)))
+
+    # Backward-compatible aliases for older consumers that expected magnitude keys.
+    if "E_T_mean" in summary and "translation_error_mag_m_mean" not in summary:
+        for suffix in ("mean", "median", "std", "max_abs", "rmse"):
+            summary[f"translation_error_mag_m_{suffix}"] = float(summary[f"E_T_{suffix}"])
+    if "E_R_deg_mean" in summary and "rotation_error_mag_deg_mean" not in summary:
+        for suffix in ("mean", "median", "std", "max_abs", "rmse"):
+            summary[f"rotation_error_mag_deg_{suffix}"] = float(summary[f"E_R_deg_{suffix}"])
     return summary
 
 
@@ -230,11 +225,13 @@ def write_error_histograms(
                         "translation_error_x_m"   : ("Translation Error X", "Translation Error X [m]"),
                         "translation_error_y_m"   : ("Translation Error Y", "Translation Error Y [m]"),
                         "translation_error_z_m"   : ("Translation Error Z", "Translation Error Z [m]"),
-                        "translation_error_mag_m" : ("Translation Error Magnitude", "Translation Error Magnitude [m]"),
+                        "E_T"                     : ("Translation Error Magnitude", "Translation Error Magnitude [m]"),
+                        "E_TN"                    : ("Normalized Translation Error", "Normalized Translation Error [-]"),
                         "rotation_error_x_deg"    : ("Rotation Error X", "Rotation Error X [deg]"),
                         "rotation_error_y_deg"    : ("Rotation Error Y", "Rotation Error Y [deg]"),
                         "rotation_error_z_deg"    : ("Rotation Error Z", "Rotation Error Z [deg]"),
-                        "rotation_error_mag_deg"  : ("Rotation Error Magnitude", "Rotation Error Magnitude [deg]"),
+                        "E_R_deg"                 : ("Rotation Error Magnitude", "Rotation Error Magnitude [deg]"),
+                        "E_C"                     : ("Composite Error", "Composite Error [- + rad]"),
                       }
 
     histogram_manifest      = {}
