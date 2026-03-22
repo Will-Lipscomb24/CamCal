@@ -340,6 +340,7 @@ def write_sanity_overlays(
                         )
 
     for idx, (record, bbox_xyxy) in enumerate(zip(frame_records, bboxes_xyxy)):
+        # create overlays with following format
         token       = f"{idx:05d}"
         image_path  = traj_dir / f"image_{token}.png"
         T_T_C       = np.asarray(record["T_T_C"], dtype = np.float64)
