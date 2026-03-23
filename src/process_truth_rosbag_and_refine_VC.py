@@ -510,7 +510,8 @@ if __name__ == "__main__":
 # truth + shifted truth + megapose:
 # need to switch envs
 # source /home/saa4743/.venvs/navy/bin/activate
-# python /home/saa4743/agnc_repos/CamCal/src/process_truth_rosbag_and_refine_VC.py
+# python /home/saa4743/agnc_repos/CamCal/src/process_truth_rosbag_and_refine_VC.py \
+#   --megapose-mesh-label middle_soho_real
 
 # truth + shifted truth, no megapose:
 # python3 /home/saa4743/agnc_repos/CamCal/src/process_truth_rosbag_and_refine_VC.py --skip-megapose
