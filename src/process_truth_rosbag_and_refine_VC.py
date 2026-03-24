@@ -256,28 +256,72 @@ def _run_megapose_refinement(
         return json.load(handle)
 
 
-def main() -> None:
-    args = _parse_args()
-    args.image_dir = args.image_dir.expanduser().resolve()
-    args.offset_json = args.offset_json.expanduser().resolve()
-    args.calibration_yaml = args.calibration_yaml.expanduser().resolve()
-    args.result_root = args.result_root.expanduser().resolve()
-    if args.rosbag_dir is not None:
-        args.rosbag_dir = args.rosbag_dir.expanduser().resolve()
-    if args.precomputed_vicon_csv is not None:
-        args.precomputed_vicon_csv = args.precomputed_vicon_csv.expanduser().resolve()
-    args.target_kps_file = args.target_kps_file.expanduser().resolve()
-    args.shifted_target_kps_file = args.shifted_target_kps_file.expanduser().resolve()
-    args.megapose_meshes_dir = args.megapose_meshes_dir.expanduser().resolve()
+def _has_direct_rosbag_frames(image_dir: Path) -> bool:
+    """Return True when the directory itself contains rosbag-saver style frames."""
+    return any(image_dir.glob("frame_*.png"))
 
-    result_root = ensure_clean_dir(args.result_root)
+
+def _segment_sort_key(path: Path) -> tuple[int, str]:
+    """Sort `images_<n>` directories numerically when possible."""
+    suffix = path.name.split("_")[-1]
+    try:
+        return int(suffix), path.name
+    except ValueError:
+        return sys.maxsize, path.name
+
+
+def _discover_segment_image_dirs(image_root: Path) -> tuple[list[Path], list[str]]:
+    """Discover non-empty `images_*` segment directories directly under the root."""
+    segment_dirs: list[Path] = []
+    skipped_empty: list[str] = []
+    for child in sorted(image_root.iterdir(), key = _segment_sort_key):
+        if not child.is_dir() or not child.name.startswith("images_"):
+            continue
+        if any(child.glob("frame_*.png")):
+            segment_dirs.append(child.resolve())
+        else:
+            skipped_empty.append(child.name)
+    return segment_dirs, skipped_empty
+
+
+def _resolve_segment_mcap_path(
+    rosbag_dir: Path | None,
+    segment_index: int | None,
+    input_mode: str,
+) -> Path | None:
+    """Resolve the split-mcap file corresponding to a segmented image directory."""
+    if rosbag_dir is None or segment_index is None:
+        return None
+    if input_mode != "multi_segment_image_dirs":
+        return None
+    candidate = rosbag_dir / f"{rosbag_dir.name}_{int(segment_index)}.mcap"
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Expected segment mcap not found for segment {segment_index}: {candidate}")
+    if candidate.stat().st_size <= 0:
+        raise RuntimeError(f"Resolved segment mcap is empty for segment {segment_index}: {candidate}")
+    return candidate.resolve()
+
+
+def _process_single_image_dir(
+    *,
+    args: argparse.Namespace,
+    image_dir: Path,
+    result_root: Path,
+    resolved_rosbag_dir: Path | None,
+    input_mode: str,
+    run_root_dir: Path,
+    segment_name: str = "",
+    segment_index: int | None = None,
+) -> dict[str, Any]:
+    """Process one image directory into truth / shifted truth / megapose packs."""
+    result_root = ensure_clean_dir(result_root)
     trajectory_export_dir = result_root / "trajectory_export"
     topic_yamls_dir = result_root / "topic_yamls"
     trajectory_export_dir.mkdir(parents=True, exist_ok=True)
     topic_yamls_dir.mkdir(parents=True, exist_ok=True)
 
     all_image_paths = collect_indxed_image_paths(
-        image_dir=args.image_dir,
+        image_dir=image_dir,
         img_suffix=".png",
         rosbag_style=True,
         img_name_parser=parse_img_saver_ros_timestamp_v01,
@@ -309,10 +353,6 @@ def main() -> None:
     )
     selected_frame_names = {path.name for path in selected_image_paths}
     if args.precomputed_vicon_csv is None:
-        resolved_rosbag_dir = _resolve_rosbag_dir(
-            image_dir = args.image_dir,
-            rosbag_dir = args.rosbag_dir,
-        )
         topic_yaml_info = write_topic_yamls(
             bag_dir=resolved_rosbag_dir,
             topic_names=[args.cam_topic, args.target_topic],
@@ -435,6 +475,19 @@ def main() -> None:
     shifted_truth_traj_dir    = None
     shifted_truth_lifted_path = None
     shifted_truth_sanity_dir  = None
+    run_name = str(run_root_dir.name)
+    source_rosbag_mcap_path = _resolve_segment_mcap_path(
+        rosbag_dir = resolved_rosbag_dir,
+        segment_index = segment_index,
+        input_mode = input_mode,
+    )
+    record_metadata = {
+        "source_run_name": run_name,
+    }
+    if len(segment_name) > 0:
+        record_metadata["source_segment_name"] = str(segment_name)
+    if segment_index is not None:
+        record_metadata["source_segment_index"] = int(segment_index)
 
     if not bool(args.shifted_truth_only):
         truth_traj_dir, truth_lifted_path = write_trajectory_pack(
@@ -442,6 +495,7 @@ def main() -> None:
             frame_records=frame_records,
             camera_settings=camera_settings,
             K=K,
+            dist_coeffs=dist_coeffs,
             image_width_px=image_width_px,
             image_height_px=image_height_px,
             pack_dir_name="trajectory_pack_truth",
@@ -449,7 +503,10 @@ def main() -> None:
             metadata_extras={
                 "origin_shift_applied": False,
                 "source_pose_variant": "truth",
+                **record_metadata,
             },
+            source_rosbag_dir=resolved_rosbag_dir,
+            source_rosbag_mcap_path=source_rosbag_mcap_path,
         )
         if not bool(args.skip_sanity_overlays):
             truth_sanity_dir = write_sanity_overlays(
@@ -466,6 +523,7 @@ def main() -> None:
             frame_records=shifted_frame_records,
             camera_settings=camera_settings,
             K=K,
+            dist_coeffs=dist_coeffs,
             image_width_px=image_width_px,
             image_height_px=image_height_px,
             pack_dir_name="trajectory_pack_truth_shifted",
@@ -475,7 +533,10 @@ def main() -> None:
                 "target_origin_shift_frame": "target",
                 "origin_shift_applied": True,
                 "source_pose_variant": "truth_translation_shifted",
+                **record_metadata,
             },
+            source_rosbag_dir=resolved_rosbag_dir,
+            source_rosbag_mcap_path=source_rosbag_mcap_path,
         )
         if not bool(args.skip_sanity_overlays):
             shifted_truth_sanity_dir = write_sanity_overlays(
@@ -507,7 +568,14 @@ def main() -> None:
     summary = {
         "result_root": str(result_root),
         "bag_dir": str(resolved_rosbag_dir) if resolved_rosbag_dir is not None else "",
-        "image_dir": str(args.image_dir),
+        "image_dir": str(image_dir),
+        "run_root_dir": str(run_root_dir),
+        "input_mode": str(input_mode),
+        "source_run_name": str(run_name),
+        "source_segment_name": str(segment_name),
+        "source_segment_index": int(segment_index) if segment_index is not None else -1,
+        "source_rosbag_mcap_path": "" if source_rosbag_mcap_path is None else str(source_rosbag_mcap_path),
+        "source_rosbag_mcap_name": "" if source_rosbag_mcap_path is None else str(source_rosbag_mcap_path.name),
         "offset_json": str(args.offset_json),
         "precomputed_vicon_csv": str(args.precomputed_vicon_csv) if args.precomputed_vicon_csv is not None else "",
         "used_precomputed_vicon_csv": bool(args.precomputed_vicon_csv is not None),
@@ -537,8 +605,104 @@ def main() -> None:
     }
     write_json_payload(result_root / "summary.json", summary)
     print(json.dumps(summary, indent=2))
-    
     print(f"All done! Results written to: {result_root}")
+    return summary
+
+
+def main() -> None:
+    args = _parse_args()
+    args.image_dir = args.image_dir.expanduser().resolve()
+    args.offset_json = args.offset_json.expanduser().resolve()
+    args.calibration_yaml = args.calibration_yaml.expanduser().resolve()
+    args.result_root = args.result_root.expanduser().resolve()
+    if args.rosbag_dir is not None:
+        args.rosbag_dir = args.rosbag_dir.expanduser().resolve()
+    if args.precomputed_vicon_csv is not None:
+        args.precomputed_vicon_csv = args.precomputed_vicon_csv.expanduser().resolve()
+    args.target_kps_file = args.target_kps_file.expanduser().resolve()
+    args.shifted_target_kps_file = args.shifted_target_kps_file.expanduser().resolve()
+    args.megapose_meshes_dir = args.megapose_meshes_dir.expanduser().resolve()
+
+    if _has_direct_rosbag_frames(args.image_dir):
+        resolved_rosbag_dir = None
+        if args.precomputed_vicon_csv is None:
+            resolved_rosbag_dir = _resolve_rosbag_dir(
+                image_dir = args.image_dir,
+                rosbag_dir = args.rosbag_dir,
+            )
+        _process_single_image_dir(
+            args = args,
+            image_dir = args.image_dir,
+            result_root = args.result_root,
+            resolved_rosbag_dir = resolved_rosbag_dir,
+            input_mode = "single_image_dir",
+            run_root_dir = args.image_dir,
+        )
+        return
+
+    segment_dirs, skipped_empty = _discover_segment_image_dirs(args.image_dir)
+    if len(segment_dirs) == 0:
+        raise RuntimeError(
+            "No direct frame_*.png files and no non-empty images_* segment directories found under "
+            f"{args.image_dir}"
+        )
+
+    base_result_root = ensure_clean_dir(args.result_root)
+    resolved_rosbag_dir = None
+    if args.precomputed_vicon_csv is None:
+        resolved_rosbag_dir = _resolve_rosbag_dir(
+            image_dir = args.image_dir,
+            rosbag_dir = args.rosbag_dir,
+        )
+
+    segment_summaries: list[dict[str, Any]] = []
+    for segment_index, segment_dir in enumerate(segment_dirs):
+        segment_result_root = base_result_root / segment_dir.name
+        print(
+            f"Processing segment {segment_index + 1}/{len(segment_dirs)}: "
+            f"{segment_dir.name} -> {segment_result_root}",
+            flush = True,
+        )
+        segment_summary = _process_single_image_dir(
+            args = args,
+            image_dir = segment_dir,
+            result_root = segment_result_root,
+            resolved_rosbag_dir = resolved_rosbag_dir,
+            input_mode = "multi_segment_image_dirs",
+            run_root_dir = args.image_dir,
+            segment_name = str(segment_dir.name),
+            segment_index = int(segment_index),
+        )
+        segment_summaries.append(
+            {
+                "segment_name": str(segment_dir.name),
+                "segment_index": int(segment_index),
+                "image_dir": str(segment_dir),
+                "result_root": str(segment_result_root),
+                "num_images_processed": int(segment_summary["num_images_processed"]),
+                "source_rosbag_mcap_name": str(segment_summary["source_rosbag_mcap_name"]),
+                "source_rosbag_mcap_path": str(segment_summary["source_rosbag_mcap_path"]),
+                "trajectory_pack_truth_dir": str(segment_summary["trajectory_pack_truth_dir"]),
+                "trajectory_pack_truth_shifted_dir": str(segment_summary["trajectory_pack_truth_shifted_dir"]),
+            }
+        )
+
+    aggregate_summary = {
+        "result_root": str(base_result_root),
+        "run_root_dir": str(args.image_dir),
+        "input_mode": "multi_segment_image_dirs",
+        "bag_dir": str(resolved_rosbag_dir) if resolved_rosbag_dir is not None else "",
+        "offset_json": str(args.offset_json),
+        "precomputed_vicon_csv": str(args.precomputed_vicon_csv) if args.precomputed_vicon_csv is not None else "",
+        "used_precomputed_vicon_csv": bool(args.precomputed_vicon_csv is not None),
+        "num_segments_processed": int(len(segment_summaries)),
+        "segment_names_processed": [entry["segment_name"] for entry in segment_summaries],
+        "skipped_empty_segments": [str(name) for name in skipped_empty],
+        "segments": segment_summaries,
+    }
+    write_json_payload(base_result_root / "summary.json", aggregate_summary)
+    print(json.dumps(aggregate_summary, indent=2))
+    print(f"All done! Results written to: {base_result_root}")
 
 
 if __name__ == "__main__":
@@ -560,3 +724,19 @@ if __name__ == "__main__":
 
 # shifted truth only:
 # python3 /home/saa4743/agnc_repos/CamCal/src/process_truth_rosbag_and_refine_VC.py --shifted-truth-only --skip-sanity-overlays --skip-megapose
+
+
+# cd /home/saa4743/agnc_repos/CamCal
+
+# /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_010 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_010/process_truth_rosbag_and_refine_VC_run_010_001
+
+#overwriting mesh:
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_011 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_011/process_truth_rosbag_and_refine_VC_run_011_001 \
+#   --megapose-mesh-label middle_soho_real \
+#   --megapose-mesh-units mm \
+#   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes

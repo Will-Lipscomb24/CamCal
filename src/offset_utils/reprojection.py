@@ -338,6 +338,17 @@ def write_sanity_overlays(
         raise ValueError(
                             f"bboxes_xyxy length must match frame_records ({len(frame_records)}), got {len(bboxes_xyxy)}."
                         )
+    previous_stamp_ns = None
+    for idx, record in enumerate(frame_records):
+        if "image_timestamp_ns" not in record:
+            raise KeyError(f"write_sanity_overlays record {idx} is missing image_timestamp_ns")
+        stamp_ns = int(record["image_timestamp_ns"])
+        if previous_stamp_ns is not None and stamp_ns < previous_stamp_ns:
+            raise ValueError(
+                                f"write_sanity_overlays records are not sorted by image_timestamp_ns at index {idx}: "
+                                f"{stamp_ns} < {previous_stamp_ns}"
+                            )
+        previous_stamp_ns = stamp_ns
 
     for idx, (record, bbox_xyxy) in enumerate(zip(frame_records, bboxes_xyxy)):
         # create overlays with following format

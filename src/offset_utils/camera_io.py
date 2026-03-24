@@ -73,9 +73,16 @@ def collect_indxed_image_paths(
     image_paths     = list(image_dir.glob(f"*{img_suffix}"))
     # sort by image number or rosbag timestamp
     if rosbag_style:
-        # if rosbag style, use the parsable index from the img filename, which is assumed to contain
-        # frame_<idx>_<sec>_<nanosec>.png, and sort by the timestamp (sec + nanosec) portion of the filename
-        image_paths = sorted(image_paths, key = lambda path: img_name_parser(path)[0])
+        # Rosbag-saver filenames are frame_<idx>_<sec>_<nanosec>.png. Canonical ordering is by timestamp first,
+        # then frame index as a tie-breaker, so segmented runs do not depend on filesystem listing order.
+        image_paths = sorted(
+                                image_paths,
+                                key = lambda path: (
+                                                        img_name_parser(path)[1],
+                                                        img_name_parser(path)[0],
+                                                        path.name,
+                                                    ),
+                            )
     else:
         image_paths = sorted(image_paths, key = parse_image_number)
     if len(image_paths) == 0:
@@ -93,13 +100,15 @@ def select_image_paths(
         return image_paths, list(range(len(image_paths)))
 
     # otherwise, select the specified indices, checking that they are valid and keeping track of the selected paths and their original indices
-    selected_paths      = []
-    selected_indices    = []
+    selected_pairs = []
     for record_index in record_indices:
         if record_index < 0 or record_index >= len(image_paths):
             raise IndexError(f"record index {record_index} is outside [0, {len(image_paths) - 1}]")
-        selected_paths.append(image_paths[record_index])
-        selected_indices.append(int(record_index))
+        selected_pairs.append((int(record_index), image_paths[record_index]))
+    # Even when the caller passes indices out of order, keep the output in canonical image order.
+    selected_pairs.sort(key = lambda pair: pair[0])
+    selected_paths      = [path for _, path in selected_pairs]
+    selected_indices    = [record_index for record_index, _ in selected_pairs]
     return selected_paths, selected_indices
 
 

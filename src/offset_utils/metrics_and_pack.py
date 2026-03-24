@@ -30,6 +30,26 @@ class PoseStampedRow:
     qz: float
 
 
+def _assert_records_sorted_by_image_timestamp(
+                                                frame_records: list[dict[str, object]],
+                                                context: str,
+                                            ) -> None:
+    """Fail fast if a trajectory-pack record list is not in nondecreasing timestamp order."""
+    if len(frame_records) <= 1:
+        return
+    previous_stamp_ns = None
+    for idx, record in enumerate(frame_records):
+        if "image_timestamp_ns" not in record:
+            raise KeyError(f"{context} record {idx} is missing image_timestamp_ns")
+        stamp_ns = int(record["image_timestamp_ns"])
+        if previous_stamp_ns is not None and stamp_ns < previous_stamp_ns:
+            raise ValueError(
+                                f"{context} records are not sorted by image_timestamp_ns at index {idx}: "
+                                f"{stamp_ns} < {previous_stamp_ns}"
+                            )
+        previous_stamp_ns = stamp_ns
+
+
 def _ros_value_to_builtin(value, depth: int = 0):
     """ Convert a ROS message object into plain Python containers """
     # guard against pathological recursion on nested ROS message trees
@@ -674,15 +694,18 @@ def build_frame_record_from_vicon_row(
 def write_trajectory_pack(
                             output_dir           : Path,
                             frame_records        : list[dict[str, object]],
-                            camera_settings      : dict[str, float],
+                            camera_settings      : dict[str, object],
                             K                    : NDArray[np.floating],
                             image_width_px       : int,
                             image_height_px      : int,
+                            dist_coeffs          : NDArray[np.floating] | None = None,
                             pose_key             : str = "pose",
                             pack_dir_name        : str = "trajectory_pack",
                             lifted_filename      : str = "trajectory_lifted.json",
                             metadata_extras      : dict[str, object] | None = None,
                             record_metadata_extras: list[dict[str, object] | None] | None = None,
+                            source_rosbag_dir    : Path | None = None,
+                            source_rosbag_mcap_path: Path | None = None,
                          ) -> tuple[Path, Path]:
     """ Write a nav_ros-style trajectory pack from offset-adjusted truth """
     output_dir       = Path(output_dir)
@@ -697,6 +720,27 @@ def write_trajectory_pack(
                             "record_metadata_extras must be None or match frame_records length "
                             f"({len(frame_records)}), received {len(record_metadata_extras)}."
                         )
+    _assert_records_sorted_by_image_timestamp(frame_records, "write_trajectory_pack")
+    dist_coeffs_arr = None if dist_coeffs is None else np.asarray(dist_coeffs, dtype = float).reshape(-1)
+    camera_settings_payload = dict(camera_settings)
+    if dist_coeffs_arr is not None:
+        camera_settings_payload["distortion_coefficients"] = dist_coeffs_arr.tolist()
+    source_rosbag_dir_resolved = None if source_rosbag_dir is None else Path(source_rosbag_dir).expanduser().resolve()
+    source_rosbag_mcap_resolved = None if source_rosbag_mcap_path is None else Path(source_rosbag_mcap_path).expanduser().resolve()
+    source_named_dir = traj_dir / "source_named_images"
+    source_named_dir.mkdir(parents = True, exist_ok = True)
+    source_rosbag_segment_relpath = ""
+    if source_rosbag_mcap_resolved is not None:
+        source_rosbag_segment_dir = traj_dir / "source_rosbag_segment"
+        source_rosbag_segment_dir.mkdir(parents = True, exist_ok = True)
+        pack_mcap_path = source_rosbag_segment_dir / source_rosbag_mcap_resolved.name
+        if pack_mcap_path.exists() or pack_mcap_path.is_symlink():
+            pack_mcap_path.unlink()
+        try:
+            pack_mcap_path.symlink_to(source_rosbag_mcap_resolved)
+        except OSError:
+            shutil.copy2(source_rosbag_mcap_resolved, pack_mcap_path)
+        source_rosbag_segment_relpath = str(pack_mcap_path.relative_to(traj_dir))
 
     lifted_records   = []
     for idx, record in enumerate(frame_records):
@@ -706,6 +750,15 @@ def write_trajectory_pack(
         out_img_path      = traj_dir / f"image_{token}.png"
         out_meta_path     = traj_dir / f"meta_{token}.json"
         shutil.copy2(src_image_path, out_img_path)
+
+        source_frame_name = Path(str(record["frame"])).name
+        source_named_img_path = source_named_dir / source_frame_name
+        if source_named_img_path.exists() or source_named_img_path.is_symlink():
+            source_named_img_path.unlink()
+        try:
+            source_named_img_path.symlink_to(Path("..") / out_img_path.name)
+        except OSError:
+            shutil.copy2(out_img_path, source_named_img_path)
 
         # unpack pose pieces into the exact nav_ros metadata schema
         q_CAM_2_TARGET    = np.asarray(record["q_CAM_2_TARGET"], dtype = float).reshape(4,)
@@ -722,12 +775,22 @@ def write_trajectory_pack(
                                                     "pose"               : "translation_in_camera_frame + q_CAM_2_TARGET",
                                                     "T_T_C"              : "^C T_T homogeneous transform",
                                                },
-                    "camera_settings"        : dict(camera_settings),
+                    "camera_settings"        : dict(camera_settings_payload),
                     "camera_K"               : np.asarray(K, dtype = float).tolist(),
+                    "camera_distortion_coefficients": None if dist_coeffs_arr is None else dist_coeffs_arr.tolist(),
                     "T_T_C"                  : T_T_C.tolist(),
                     "output_image_size_wh"   : [int(image_width_px), int(image_height_px)],
-                    "source_frame_name"      : str(record["frame"]),
+                    "source_frame_name"      : str(source_frame_name),
                     "source_frame_index"     : int(record["frame_index"]),
+                    "source_rosbag_dir"      : "" if source_rosbag_dir_resolved is None else str(source_rosbag_dir_resolved),
+                    "source_rosbag_metadata_path": "" if source_rosbag_dir_resolved is None else str(source_rosbag_dir_resolved / "metadata.yaml"),
+                    "source_rosbag_mcap_name": "" if source_rosbag_mcap_resolved is None else str(source_rosbag_mcap_resolved.name),
+                    "source_rosbag_mcap_path": "" if source_rosbag_mcap_resolved is None else str(source_rosbag_mcap_resolved),
+                    "pack_source_rosbag_mcap_path": str(source_rosbag_segment_relpath),
+                    "pack_image_name"        : str(out_img_path.name),
+                    "pack_image_path"        : str(out_img_path.relative_to(traj_dir)),
+                    "source_named_image_name": str(source_named_img_path.name),
+                    "source_named_image_path": str(source_named_img_path.relative_to(traj_dir)),
                     "image_timestamp_ns"     : int(record["image_timestamp_ns"]),
                     "image_timestamp_s"      : float(record["image_timestamp_ns"]) / 1e9,
                     "cam_timestamp_ns"       : int(record["cam_timestamp_ns"]),
@@ -750,8 +813,14 @@ def write_trajectory_pack(
                                     "token"              : token,
                                     "image_path"         : str(out_img_path),
                                     "meta_path"          : str(out_meta_path),
-                                    "source_frame_name"  : str(record["frame"]),
+                                    "source_frame_name"  : str(source_frame_name),
                                     "source_frame_index" : int(record["frame_index"]),
+                                    "source_rosbag_dir"  : "" if source_rosbag_dir_resolved is None else str(source_rosbag_dir_resolved),
+                                    "source_rosbag_mcap_name": "" if source_rosbag_mcap_resolved is None else str(source_rosbag_mcap_resolved.name),
+                                    "source_rosbag_mcap_path": "" if source_rosbag_mcap_resolved is None else str(source_rosbag_mcap_resolved),
+                                    "pack_source_rosbag_mcap_path": str(source_rosbag_segment_relpath),
+                                    "pack_image_name"    : str(out_img_path.name),
+                                    "source_named_image_path": str(source_named_img_path),
                                     "image_timestamp_ns" : int(record["image_timestamp_ns"]),
                                 }
                              )

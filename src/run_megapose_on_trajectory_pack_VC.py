@@ -94,6 +94,17 @@ def _to_builtin(value: Any) -> Any:
     return value
 
 
+def _load_dist_coeffs_from_meta(meta: dict[str, Any]) -> np.ndarray | None:
+    dist_coeffs = meta.get("camera_distortion_coefficients", None)
+    if dist_coeffs is None:
+        camera_settings = meta.get("camera_settings", {})
+        if isinstance(camera_settings, dict):
+            dist_coeffs = camera_settings.get("distortion_coefficients", None)
+    if dist_coeffs is None:
+        return None
+    return np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run MegaPose refinement on a CamCal trajectory pack and write a new trajectory pack."
@@ -212,6 +223,7 @@ def write_sanity_overlays_from_lifted(
         frame_records.append(
             {
                 "T_T_C": meta["T_T_C"],
+                "image_timestamp_ns": int(meta["image_timestamp_ns"]),
             }
         )
         bbox = meta.get("megapose_input_bbox_xyxy", [])
@@ -369,6 +381,7 @@ def _select_records(records: list[dict[str, Any]], record_indices: list[int] | N
                 f"record index {record_index} is outside the valid range [0, {len(records) - 1}]"
             )
         selected.append((int(record_index), records[record_index]))
+    selected.sort(key = lambda pair: pair[0])
     return selected
 
 
@@ -378,6 +391,14 @@ def _build_common_metadata_extras(
     megapose_backend: str,
 ) -> dict[str, Any]:
     metadata_extras = {
+        "source_run_name": input_meta.get("source_run_name"),
+        "source_segment_name": input_meta.get("source_segment_name"),
+        "source_segment_index": input_meta.get("source_segment_index"),
+        "source_rosbag_dir": input_meta.get("source_rosbag_dir"),
+        "source_rosbag_metadata_path": input_meta.get("source_rosbag_metadata_path"),
+        "source_rosbag_mcap_name": input_meta.get("source_rosbag_mcap_name"),
+        "source_rosbag_mcap_path": input_meta.get("source_rosbag_mcap_path"),
+        "pack_source_rosbag_mcap_path": input_meta.get("pack_source_rosbag_mcap_path"),
         "target_origin_shift_m": input_meta.get("target_origin_shift_m"),
         "target_origin_shift_frame": input_meta.get("target_origin_shift_frame"),
         "origin_shift_applied": input_meta.get("origin_shift_applied"),
@@ -553,17 +574,22 @@ def main() -> None:
         args=args,
         megapose_backend=megapose_backend,
     )
+    source_rosbag_dir = first_meta.get("source_rosbag_dir", "")
+    source_rosbag_mcap_path = first_meta.get("source_rosbag_mcap_path", "")
     output_pack_dir, output_lifted_path = write_trajectory_pack(
         output_dir=output_root,
         frame_records=frame_records,
         camera_settings=camera_settings,
         K=np.asarray(first_meta["camera_K"], dtype=np.float64),
+        dist_coeffs=_load_dist_coeffs_from_meta(first_meta),
         image_width_px=image_width_px,
         image_height_px=image_height_px,
         pack_dir_name=args.output_pack_dir_name,
         lifted_filename=args.output_lifted_filename,
         metadata_extras=common_metadata_extras,
         record_metadata_extras=record_metadata_extras,
+        source_rosbag_dir=Path(source_rosbag_dir) if str(source_rosbag_dir).strip() else None,
+        source_rosbag_mcap_path=Path(source_rosbag_mcap_path) if str(source_rosbag_mcap_path).strip() else None,
     )
     sanity_check_dir: Path | None = None
     if not args.skip_sanity_overlays:
