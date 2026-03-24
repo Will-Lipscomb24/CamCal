@@ -270,6 +270,17 @@ def _segment_sort_key(path: Path) -> tuple[int, str]:
         return sys.maxsize, path.name
 
 
+def _parse_segment_index_from_dir(segment_dir: Path) -> int:
+    """Parse the numeric suffix from an `images_<n>` directory name."""
+    suffix = segment_dir.name.split("_")[-1]
+    try:
+        return int(suffix)
+    except ValueError as exc:
+        raise ValueError(
+            f"Expected segmented image directory to end with an integer suffix, got: {segment_dir.name}"
+        ) from exc
+
+
 def _discover_segment_image_dirs(image_root: Path) -> tuple[list[Path], list[str]]:
     """Discover non-empty `images_*` segment directories directly under the root."""
     segment_dirs: list[Path] = []
@@ -352,15 +363,24 @@ def _process_single_image_dir(
         units=args.shifted_target_kps_units,
     )
     selected_frame_names = {path.name for path in selected_image_paths}
+    rosbag_input_path = resolved_rosbag_dir
+    if args.precomputed_vicon_csv is None:
+        rosbag_input_path = _resolve_segment_mcap_path(
+            rosbag_dir = resolved_rosbag_dir,
+            segment_index = segment_index,
+            input_mode = input_mode,
+        )
+        if rosbag_input_path is None:
+            rosbag_input_path = resolved_rosbag_dir
     if args.precomputed_vicon_csv is None:
         topic_yaml_info = write_topic_yamls(
-            bag_dir=resolved_rosbag_dir,
+            bag_dir=rosbag_input_path,
             topic_names=[args.cam_topic, args.target_topic],
             output_dir=topic_yamls_dir,
         )
         vicon_df = build_vicon_dataframe_from_rosbag(
             image_paths=selected_image_paths,
-            bag_dir=resolved_rosbag_dir,
+            bag_dir=rosbag_input_path,
             cam_topic=args.cam_topic,
             target_topic=args.target_topic,
         )
@@ -656,11 +676,12 @@ def main() -> None:
         )
 
     segment_summaries: list[dict[str, Any]] = []
-    for segment_index, segment_dir in enumerate(segment_dirs):
+    for segment_ordinal, segment_dir in enumerate(segment_dirs):
+        segment_index = _parse_segment_index_from_dir(segment_dir)
         segment_result_root = base_result_root / segment_dir.name
         print(
-            f"Processing segment {segment_index + 1}/{len(segment_dirs)}: "
-            f"{segment_dir.name} -> {segment_result_root}",
+            f"Processing segment {segment_ordinal + 1}/{len(segment_dirs)}: "
+            f"{segment_dir.name} (segment index {segment_index}) -> {segment_result_root}",
             flush = True,
         )
         segment_summary = _process_single_image_dir(
@@ -677,6 +698,7 @@ def main() -> None:
             {
                 "segment_name": str(segment_dir.name),
                 "segment_index": int(segment_index),
+                "segment_ordinal": int(segment_ordinal),
                 "image_dir": str(segment_dir),
                 "result_root": str(segment_result_root),
                 "num_images_processed": int(segment_summary["num_images_processed"]),
@@ -732,7 +754,7 @@ if __name__ == "__main__":
 #   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_010 \
 #   --result-root /home/saa4743/agnc_repos/CamCal/results/run_010/process_truth_rosbag_and_refine_VC_run_010_001
 
-#overwriting mesh:
+# # overwriting mesh:
 # cd /home/saa4743/agnc_repos/CamCal
 # /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
 #   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_011 \
@@ -741,13 +763,37 @@ if __name__ == "__main__":
 #   --megapose-mesh-units mm \
 #   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes
 
-# overwriting mesh + using different keypoints 
+# # overwriting mesh + using different keypoints 
 # cd /home/saa4743/agnc_repos/CamCal
 # /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
-#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_012 \
-#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_012/process_truth_rosbag_and_refine_VC_run_012_001 \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_013 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_013/process_truth_rosbag_and_refine_VC_run_013_001 \
 #   --megapose-mesh-label middle_soho_real \
 #   --megapose-mesh-units mm \
 #   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes \
 #   --shifted-target-kps-file /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/mesh_keypoints/middle_soho_real/mesh_points_5000.json \
+#   --shifted-target-kps-units mm
+
+
+# # soho with colors overwriting mesh + using different keypoints 
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_014 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_014/process_truth_rosbag_and_refine_VC_run_014_001 \
+#   --megapose-mesh-label soho_centered_color \
+#   --megapose-mesh-units mm \
+#   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes \
+#   --shifted-target-kps-file /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/mesh_keypoints/soho_centered/rendered_keypoints.json \
+#   --shifted-target-kps-units mm
+
+
+# # soho with colors overwriting mesh + using different keypoints, less jitter
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_016 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_016/process_truth_rosbag_and_refine_VC_run_016_001 \
+#   --megapose-mesh-label soho_centered_color \
+#   --megapose-mesh-units mm \
+#   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes \
+#   --shifted-target-kps-file /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/mesh_keypoints/soho_centered/rendered_keypoints.json \
 #   --shifted-target-kps-units mm
