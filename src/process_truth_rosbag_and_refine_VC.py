@@ -740,3 +740,14 @@ if __name__ == "__main__":
 #   --megapose-mesh-label middle_soho_real \
 #   --megapose-mesh-units mm \
 #   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes
+
+# overwriting mesh + using different keypoints 
+# cd /home/saa4743/agnc_repos/CamCal
+# /home/saa4743/.venvs/navy/bin/python src/process_truth_rosbag_and_refine_VC.py \
+#   --image-dir /home/saa4743/agnc_repos/nav_ros/testing/live_tests/run_012 \
+#   --result-root /home/saa4743/agnc_repos/CamCal/results/run_012/process_truth_rosbag_and_refine_VC_run_012_001 \
+#   --megapose-mesh-label middle_soho_real \
+#   --megapose-mesh-units mm \
+#   --megapose-meshes-dir /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/meshes \
+#   --shifted-target-kps-file /home/saa4743/agnc_repos/nav_ros/testing/pose_model_artifacts/mesh_keypoints/middle_soho_real/mesh_points_5000.json \
+#   --shifted-target-kps-units mm
