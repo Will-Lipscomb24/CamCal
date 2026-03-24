@@ -55,13 +55,14 @@ HERE                        = Path(__file__).resolve()
 PARENT_ROOT                 = HERE.parent
 CAMCAL_ROOT                 = PARENT_ROOT.parent
 AGNC_ROOT                   = CAMCAL_ROOT.parent
-test_num                   = "001" # change this as needed
-DEFAULT_RUN_NAME            = "run_004" # change this as needed
-DEFAULT_DATA_DIR            = CAMCAL_ROOT / "data" / "rosbag_data" / DEFAULT_RUN_NAME
-DEFAULT_ROSBAG_DIR          = DEFAULT_DATA_DIR / "rosbag2_2026_03_19-23_06_16" 
+NAVROS_ROOT                 = AGNC_ROOT / "nav_ros"
+test_num                    = "001" # change this as needed
+DEFAULT_RUN_NAME            = "run_007" # change this as needed
+# DEFAULT_DATA_DIR            = CAMCAL_ROOT / "data" / "rosbag_data" / DEFAULT_RUN_NAME
+DEFAULT_DATA_DIR            = NAVROS_ROOT / "testing" / "live_tests" / DEFAULT_RUN_NAME
 DEFAULT_CALIBRATION_YAML    = CAMCAL_ROOT / "data" / "offset" / "collection_001" / "calibration.yaml" # change this as needed
 DEFAULT_OFFSET_JSON         = CAMCAL_ROOT / "results" / "collection_001" / "calc_and_verify_offset_001" / "calc_offset_results.json" # change this as needed
-DEFAULT_RESULT_ROOT         = CAMCAL_ROOT / "results" / DEFAULT_RUN_NAME / f"process_truth_rosbag_and_refine_VC_{test_num}" # change this as needed
+DEFAULT_RESULT_ROOT         = CAMCAL_ROOT / "results" / DEFAULT_RUN_NAME / f"process_truth_rosbag_and_refine_VC_{DEFAULT_RUN_NAME}_{test_num}" # change this as needed
 
 DEFAULT_CAM_TOPIC           = "/vicon/basler_cam/basler_cam" # change this as needed, should be the compresed? 
 DEFAULT_TARGET_TOPIC        = "/vicon/soho/soho"
@@ -98,12 +99,44 @@ def _infer_image_size_wh(image_paths: list[Path]) -> tuple[int, int]:
     return int(width_px), int(height_px)
 
 
+def _resolve_rosbag_dir(image_dir: Path, rosbag_dir: Path | None) -> Path:
+    """ Resolve the rosbag directory, defaulting to the single child bag under image_dir """
+    if rosbag_dir is not None:
+        resolved = rosbag_dir.expanduser().resolve()
+        if not resolved.is_dir():
+            raise FileNotFoundError(f"rosbag directory not found: {resolved}")
+        if not (resolved / "metadata.yaml").is_file():
+            raise FileNotFoundError(f"rosbag metadata.yaml not found under: {resolved}")
+        return resolved
+
+    candidates = []
+    for child in sorted(image_dir.iterdir()):
+        if child.is_dir() and (child / "metadata.yaml").is_file():
+            candidates.append(child.resolve())
+
+    if len(candidates) == 0:
+        raise FileNotFoundError(
+            f"No rosbag directory with metadata.yaml found directly under image_dir: {image_dir}"
+        )
+    if len(candidates) > 1:
+        raise RuntimeError(
+            "Expected exactly one rosbag directory under image_dir, found "
+            f"{len(candidates)}: {[str(path) for path in candidates]}"
+        )
+    return candidates[0]
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Process rosbag truth into trajectory packs, apply the target shift, and run MegaPose refinement."
     )
     parser.add_argument("--image-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--rosbag-dir", type=Path, default=DEFAULT_ROSBAG_DIR)
+    parser.add_argument(
+        "--rosbag-dir",
+        type=Path,
+        default=None,
+        help="Optional rosbag directory. When omitted, detect the single child rosbag under --image-dir.",
+    )
     parser.add_argument("--offset-json", type=Path, default=DEFAULT_OFFSET_JSON)
     parser.add_argument("--calibration-yaml", type=Path, default=DEFAULT_CALIBRATION_YAML)
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
@@ -226,10 +259,11 @@ def _run_megapose_refinement(
 def main() -> None:
     args = _parse_args()
     args.image_dir = args.image_dir.expanduser().resolve()
-    args.rosbag_dir = args.rosbag_dir.expanduser().resolve()
     args.offset_json = args.offset_json.expanduser().resolve()
     args.calibration_yaml = args.calibration_yaml.expanduser().resolve()
     args.result_root = args.result_root.expanduser().resolve()
+    if args.rosbag_dir is not None:
+        args.rosbag_dir = args.rosbag_dir.expanduser().resolve()
     if args.precomputed_vicon_csv is not None:
         args.precomputed_vicon_csv = args.precomputed_vicon_csv.expanduser().resolve()
     args.target_kps_file = args.target_kps_file.expanduser().resolve()
@@ -275,18 +309,23 @@ def main() -> None:
     )
     selected_frame_names = {path.name for path in selected_image_paths}
     if args.precomputed_vicon_csv is None:
+        resolved_rosbag_dir = _resolve_rosbag_dir(
+            image_dir = args.image_dir,
+            rosbag_dir = args.rosbag_dir,
+        )
         topic_yaml_info = write_topic_yamls(
-            bag_dir=args.rosbag_dir,
+            bag_dir=resolved_rosbag_dir,
             topic_names=[args.cam_topic, args.target_topic],
             output_dir=topic_yamls_dir,
         )
         vicon_df = build_vicon_dataframe_from_rosbag(
             image_paths=selected_image_paths,
-            bag_dir=args.rosbag_dir,
+            bag_dir=resolved_rosbag_dir,
             cam_topic=args.cam_topic,
             target_topic=args.target_topic,
         )
     else:
+        resolved_rosbag_dir = args.rosbag_dir
         topic_yaml_info = {
             "output_dir": str(topic_yamls_dir),
             "manifest_path": "",
@@ -467,7 +506,7 @@ def main() -> None:
 
     summary = {
         "result_root": str(result_root),
-        "bag_dir": str(args.rosbag_dir),
+        "bag_dir": str(resolved_rosbag_dir) if resolved_rosbag_dir is not None else "",
         "image_dir": str(args.image_dir),
         "offset_json": str(args.offset_json),
         "precomputed_vicon_csv": str(args.precomputed_vicon_csv) if args.precomputed_vicon_csv is not None else "",
